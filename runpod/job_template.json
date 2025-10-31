@@ -1,0 +1,12 @@
+{
+  "name": "hippocampus-train-cloud",
+  "image": "hippocampus-train:latest",
+  "gpuCount": 1,
+  "cloudType": "ALL",
+  "env": {
+    "PYTHONUNBUFFERED": "1"
+  },
+  "volumeInGiB": 20,
+  "ports": [],
+  "startCommand": "python scripts/train_cloud.py --quick --output-dir artifacts"
+}
