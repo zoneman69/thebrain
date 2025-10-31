@@ -1,0 +1,19 @@
+hippocampus:
+  input_dims:
+    vision: 512
+    cerebellum: 64
+    frontal: 128
+    auditory: 256
+    language: 256
+    affect: 16
+  shared_dim: 192
+  time_dim: 64
+  capacity: 1024
+  sparsity: 0.05
+  novelty_threshold: 0.25
+  window_size: 0.35
+  tau: 0.15
+  max_total: 2048
+  max_per_context: 6
+  orth_penalty: 0.0
+seed: 123
