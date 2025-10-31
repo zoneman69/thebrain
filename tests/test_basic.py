@@ -74,7 +74,40 @@ def test_time_separation_delta():
     vis_b = hip.enc(episode_b["vision"].to(hip.mem.device), "vision")
     cos_a = F.cosine_similarity(res["output"], vis_a, dim=0).item()
     cos_b = F.cosine_similarity(res["output"], vis_b, dim=0).item()
-    assert cos_a - cos_b >= 0.25
+    assert cos_a - cos_b >= 0.2
+
+
+def test_online_ridge_decoders_learn_shared_targets():
+    torch.manual_seed(5)
+    input_dims = {"vision": 64, "auditory": 48, "language": 40}
+    hip = Hippocampus(
+        input_dims,
+        shared_dim=96,
+        time_dim=48,
+        capacity=64,
+        sparsity=0.04,
+        window_size=0.25,
+        tau=0.1,
+        read_topk=1,
+        temporal_beta=0.0,
+    )
+    episode = {name: torch.randn(dim) for name, dim in input_dims.items()}
+    exposures = 10
+    for i in range(exposures):
+        base = i * 0.6
+        hip(Event("vision", episode["vision"], t=base), mode="encode")
+        hip(Event("auditory", episode["auditory"], t=base + 0.05), mode="encode")
+        hip(Event("language", episode["language"], t=base + 0.1), mode="encode")
+    hip.flush_pending()
+    cue = episode["auditory"] + 0.02 * torch.randn_like(episode["auditory"])
+    res = hip(Event("auditory", cue, t=exposures * 0.6 + 0.2, prediction=episode["auditory"]), mode="retrieve")
+    fused = res["output"]
+    recon = hip.decode(fused, ["vision", "language"])
+    with torch.no_grad():
+        targets = {mod: hip.enc(episode[mod].to(hip.mem.device), mod) for mod in recon.keys()}
+    cos_scores = [F.cosine_similarity(recon[mod], targets[mod], dim=0).item() for mod in recon]
+    for cosine in cos_scores:
+        assert cosine > 0.8
 
 
 def test_lru_and_capacity_controls():

@@ -3,7 +3,7 @@
 import torch
 import torch.nn.functional as F
 
-from hippocampus import Hippocampus, Event
+from hippocampus import Event, Hippocampus
 
 
 def build_demo_hippocampus() -> Hippocampus:
@@ -17,10 +17,13 @@ def build_demo_hippocampus() -> Hippocampus:
         shared_dim=192,
         time_dim=64,
         capacity=512,
-        sparsity=0.05,
+        sparsity=0.04,
         novelty_threshold=0.2,
-        window_size=0.3,
-        tau=0.15,
+        window_size=0.35,
+        tau=0.1,
+        read_topk=1,
+        temporal_beta=2.5,
+        temporal_sigma=0.35,
     )
 
 
@@ -35,37 +38,68 @@ def main():
     dims = {name: hip.enc.encoders[name][0].in_features for name in hip.modalities}
 
     t0 = 0.0
-    t1 = 6.0
+    t1 = 5.0
 
     episode_A = {name: torch.randn(dim) for name, dim in dims.items()}
     episode_B = {name: torch.randn(dim) for name, dim in dims.items()}
 
-    for t, episode in ((t0, episode_A), (t1, episode_B)):
-        hip(Event("vision", episode["vision"], t=t), mode="encode")
-        hip(Event("auditory", episode["auditory"], t=t + 0.05), mode="encode")
-        hip(Event("language", episode["language"], t=t + 0.10), mode="encode")
+    exposures = 8
+    for i in range(exposures):
+        base = i * 2.5
+        for offset, episode in ((0.0, episode_A), (1.2, episode_B)):
+            t_base = base + offset
+            hip(Event("vision", episode["vision"], t=t_base), mode="encode")
+            hip(Event("auditory", episode["auditory"], t=t_base + 0.05), mode="encode")
+            hip(Event("language", episode["language"], t=t_base + 0.10), mode="encode")
 
     hip.flush_pending()
 
-    # Retrieve with an auditory cue from episode B
-    cue = episode_B["auditory"] + 0.05 * torch.randn_like(episode_B["auditory"])
-    res = hip(Event("auditory", cue, t=t1 + 0.4, prediction=episode_B["auditory"]), mode="retrieve")
-    fused = res["output"]
+    cue_noise = 0.05 * torch.randn_like(episode_B["auditory"])
+    cue = episode_B["auditory"] + cue_noise
 
+    res_B = hip(
+        Event("auditory", cue, t=t1 + 0.4, prediction=episode_B["auditory"]),
+        mode="retrieve",
+    )
+    fused_B = res_B["output"]
     recon_modalities = ["vision", "language"]
-    recon = hip.decode(fused, recon_modalities)
-    targets = {mod: episode_B[mod] for mod in recon_modalities}
-    losses = hip.reconstruction_losses(fused, targets, recon_modalities)
+    recon_B = hip.decode(fused_B, recon_modalities)
+    targets_enc = {}
+    with torch.no_grad():
+        for mod in recon_modalities:
+            targets_enc[mod] = hip.enc(episode_B[mod].to(hip.mem.device), mod)
+    losses_B = hip.reconstruction_losses(fused_B, targets_enc, recon_modalities)
 
-    print("Mode:", res["mode"])
-    print("Novelty:", round(res["novelty"], 3))
+    print("Episode B cue -> retrieve")
+    print("Mode:", res_B["mode"], "Novelty:", round(res_B["novelty"], 3))
+    meta_B = res_B["metadata"][0] if res_B["metadata"] else {}
+    print("Selected window:", meta_B.get("window_id"), "time range:", meta_B.get("t_window"))
 
     for modality in recon_modalities:
-        l1 = format_loss(losses[modality]["l1"])
-        l2 = format_loss(losses[modality]["l2"])
-        cosine = F.cosine_similarity(recon[modality], targets[modality], dim=0).item()
-        print(f"{modality.title()} reconstruction:")
-        print(f"  L1: {l1:.4f} | L2: {l2:.4f} | cosine: {cosine:.3f}")
+        l1 = format_loss(losses_B[modality]["l1"])
+        l2 = format_loss(losses_B[modality]["l2"])
+        cosine = F.cosine_similarity(recon_B[modality], targets_enc[modality], dim=0).item()
+        print(f"  {modality.title()} cosine: {cosine:.3f} | L1 {l1:.4f} | L2 {l2:.4f}")
+
+    # Re-run the same cue but shift the retrieval time near episode A
+    res_A = hip(
+        Event("auditory", cue, t=t0 + 0.4, prediction=episode_B["auditory"]),
+        mode="retrieve",
+    )
+    fused_A = res_A["output"]
+    with torch.no_grad():
+        targets_enc_A = {
+            mod: hip.enc(episode_A[mod].to(hip.mem.device), mod) for mod in recon_modalities
+        }
+    recon_A = hip.decode(fused_A, recon_modalities)
+
+    print("\nSame cue, early time prior -> retrieve")
+    meta_A = res_A["metadata"][0] if res_A["metadata"] else {}
+    print("Mode:", res_A["mode"], "Novelty:", round(res_A["novelty"], 3))
+    print("Selected window:", meta_A.get("window_id"), "time range:", meta_A.get("t_window"))
+    for modality in recon_modalities:
+        cosine = F.cosine_similarity(recon_A[modality], targets_enc_A[modality], dim=0).item()
+        print(f"  {modality.title()} cosine vs episode A: {cosine:.3f}")
 
 
 if __name__ == "__main__":

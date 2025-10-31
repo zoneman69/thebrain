@@ -3,7 +3,7 @@ import json
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Iterable
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -68,6 +68,7 @@ class FastHebbMemory(nn.Module):
         self.register_buffer("K", torch.zeros((0, dim)))
         self.register_buffer("V", torch.zeros((0, dim)))
         self.register_buffer("strength", torch.zeros(0))
+        self.register_buffer("times", torch.zeros(0))
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.contexts: List[str] = []
         self.metadata: List[Dict[str, torch.Tensor]] = []
@@ -84,6 +85,7 @@ class FastHebbMemory(nn.Module):
         self.V = self.V[keep]
         self.strength = self.strength[keep]
         self.last_used = self.last_used[keep]
+        self.times = self.times[keep]
         new_contexts = []
         new_metadata = []
         for i, keep_flag in enumerate(keep.tolist()):
@@ -109,7 +111,8 @@ class FastHebbMemory(nn.Module):
                 self._evict_indices([ctx_indices[rel_idx]])
 
     def write(self, key: torch.Tensor, value: torch.Tensor, strength: float = 1.0,
-              context: Optional[str] = None, metadata: Optional[Dict[str, torch.Tensor]] = None):
+              context: Optional[str] = None, metadata: Optional[Dict[str, torch.Tensor]] = None,
+              time: Optional[float] = None):
         context = context or "global"
         key = F.normalize(key.detach(), dim=-1).unsqueeze(0)
         value = value.detach().unsqueeze(0)
@@ -119,14 +122,22 @@ class FastHebbMemory(nn.Module):
         self.V = torch.cat([self.V, value.to(self.device)], dim=0)
         self.strength = torch.cat([self.strength, s], dim=0)
         self.last_used = torch.cat([self.last_used, torch.tensor([self.access_counter], device=self.device)], dim=0)
+        time_value = torch.tensor([time if time is not None else 0.0], device=self.device)
+        self.times = torch.cat([self.times, time_value], dim=0)
         self.contexts.append(context)
         self.metadata.append(metadata or {})
 
-    def read(self, query: torch.Tensor, topk: int = 32):
+    def read(self, query: torch.Tensor, topk: int = 32, query_time: Optional[float] = None,
+             beta: float = 0.0, sigma: float = 1.0):
         if self.K.shape[0] == 0:
             return torch.zeros(self.dim, device=self.device), {"attn": None, "indices": []}
         q = F.normalize(query, dim=-1).unsqueeze(0)
         logits = (q @ self.K.T) / self.tau
+        if query_time is not None and beta > 0.0 and sigma > 0.0:
+            mem_times = self.times.unsqueeze(0)
+            deltas = (query_time - mem_times) / sigma
+            temporal_prior = torch.exp(-0.5 * deltas.pow(2)) * beta
+            logits = logits + temporal_prior
         meta = []
         if topk is not None and self.K.shape[0] > topk:
             vals, idxs = torch.topk(logits, k=topk, dim=-1)
@@ -190,13 +201,19 @@ class PendingWindow:
 class Hippocampus(nn.Module):
     def __init__(self, input_dims: Dict[str, int], shared_dim: int = 256, time_dim: int = 64,
                  capacity: int = 1024, sparsity: float = 0.04, novelty_threshold: float = 0.3,
-                 window_size: float = 0.5, tau: float = 0.2, time_scale: float = 1.0, time_gain: float = 1.0,
+                 window_size: float = 0.5, tau: float = 0.1, time_scale: float = 1.0, time_gain: float = 1.0,
                  max_total: Optional[int] = None, max_per_context: Optional[int] = None,
-                 orth_penalty: float = 0.0):
+                 orth_penalty: float = 0.0, read_topk: int = 1,
+                 temporal_beta: float = 0.0, temporal_sigma: float = 1.0,
+                 decoder_lambda: float = 1e-2):
         super().__init__()
         self.enc = ModalityEncoder(input_dims, shared_dim)
         with torch.random.fork_rng():
-            self.decoders = Decoders(shared_dim, input_dims)
+            self.decoders = Decoders(
+                shared_dim,
+                {name: shared_dim for name in input_dims},
+                lam=decoder_lambda,
+            )
         self.modalities = list(input_dims.keys())
         self.sep_sparsity = sparsity
         self.time_dim = time_dim
@@ -205,6 +222,9 @@ class Hippocampus(nn.Module):
         self.novelty_threshold = novelty_threshold
         self.window_size = window_size
         self.orth_penalty = orth_penalty
+        self.read_topk = read_topk
+        self.temporal_beta = temporal_beta
+        self.temporal_sigma = temporal_sigma
         self.mix = nn.Sequential(
             nn.Linear(shared_dim + time_dim, shared_dim),
             nn.LayerNorm(shared_dim),
@@ -214,6 +234,7 @@ class Hippocampus(nn.Module):
         self.time_mixer = nn.Linear(time_dim, shared_dim)
         self.mem = FastHebbMemory(dim=shared_dim, capacity=capacity, tau=tau,
                                   max_total=max_total or capacity, max_per_context=max_per_context)
+        self.decoders.to(self.mem.device)
         self.fusion = nn.Linear(shared_dim * 2, shared_dim)
         with torch.no_grad():
             eye = torch.eye(shared_dim)
@@ -235,10 +256,11 @@ class Hippocampus(nn.Module):
         self.pending: Dict[int, PendingWindow] = {}
         self.to(self.mem.device)
 
-    def decode(self, fused: torch.Tensor, target_modalities: Optional[List[str]] = None) -> Dict[str, torch.Tensor]:
+    def decode(self, fused: torch.Tensor, target_modalities: Optional[Iterable[str]] = None) -> Dict[str, torch.Tensor]:
         """Decode a fused hippocampal representation back into requested modalities."""
         modalities = target_modalities or list(self.decoders.available_modalities())
-        return self.decoders(fused.to(self.mem.device), modalities)
+        fused_vec = fused.to(self.mem.device)
+        return self.decoders.decode_many(fused_vec, modalities)
 
     def reconstruction_losses(
         self,
@@ -249,13 +271,17 @@ class Hippocampus(nn.Module):
         """Compute per-modality reconstruction losses (L1 and L2)."""
 
         modalities = target_modalities or list(targets.keys())
-        recons = self.decode(fused, modalities)
+        fused_vec = fused.to(self.mem.device)
+        recons = self.decode(fused_vec, modalities)
         losses: Dict[str, Dict[str, torch.Tensor]] = {}
         for modality in modalities:
             if modality not in targets:
                 raise KeyError(f"Missing target tensor for modality '{modality}'")
             recon = recons[modality]
             target = targets[modality].to(recon.device)
+            if target.shape[-1] != recon.shape[-1]:
+                with torch.no_grad():
+                    target = self.enc(target, modality)
             diff = recon - target
             losses[modality] = {
                 "l1": diff.abs().mean(),
@@ -263,10 +289,10 @@ class Hippocampus(nn.Module):
             }
         return losses
 
-    def encode_dg(self, x: torch.Tensor, t: float) -> torch.Tensor:
+    def encode_dg(self, x: torch.Tensor, t: float, already_timed: bool = False) -> torch.Tensor:
         time_code = sinusoidal_time_pos_enc(t * self.time_scale, self.time_dim).to(x.device)
         time_emb = self.time_mixer(time_code) * self.time_gain
-        combined = x + time_emb
+        combined = x if already_timed else (x + time_emb)
         h = torch.cat([combined, time_code], dim=-1)
         h = self.mix(h)
         h = kwta(h, sparsity=self.sep_sparsity)
@@ -296,14 +322,16 @@ class Hippocampus(nn.Module):
         gate_logits = torch.stack([self.modality_gates[n] for n in names]).squeeze(-1)
         weights = torch.softmax(gate_logits, dim=0).unsqueeze(-1)
         fused = torch.sum(weights * encs, dim=0)
-        time_code = sinusoidal_time_pos_enc((win.t_start + self.window_size * 0.5) * self.time_scale, self.time_dim).to(device)
-        time_emb = self.time_mixer(time_code) * self.time_gain
-        agg_key = self.fusion(torch.cat([fused, avg_enc], dim=-1)) + time_emb
-        fused_value = fused + time_emb
         window_center = win.t_start + self.window_size * 0.5
-        key = self.encode_dg(agg_key, t=window_center)
+        time_code = sinusoidal_time_pos_enc(window_center * self.time_scale, self.time_dim).to(device)
+        time_emb = self.time_mixer(time_code) * self.time_gain
+        fusion_input = torch.cat([fused, avg_enc], dim=-1)
+        fused_input = self.fusion(fusion_input)
+        fused_value = fused_input + time_emb
+        key = self.encode_dg(fused_value, t=window_center, already_timed=True)
         metadata = {"modalities": {n: win.modalities[n].detach().cpu() for n in names},
                     "raw": {n: win.raw[n].detach().cpu() for n in names},
+                    "targets": {n: win.modalities[n].detach().cpu() for n in names},
                     "t_window": (win.t_start, win.last_t),
                     "window_id": window_id,
                     "context": win.context or "global"}
@@ -312,7 +340,10 @@ class Hippocampus(nn.Module):
             affect_stack = torch.stack([a.to(self.affect_linear.weight.device) for a in win.affects], dim=0)
             mean_affect = affect_stack.mean(dim=0)
             strength = F.softplus(self.affect_linear(mean_affect)).item()
-        self.mem.write(key=key, value=fused_value, strength=strength, context=win.context, metadata=metadata)
+        targets = {n: win.modalities[n].to(device) for n in names}
+        self.decoders.observe(fused_value.detach(), targets)
+        self.mem.write(key=key, value=fused_value, strength=strength, context=win.context,
+                       metadata=metadata, time=window_center)
 
     def _flush_due_windows(self, current_t: Optional[float] = None):
         to_flush = []
@@ -365,7 +396,13 @@ class Hippocampus(nn.Module):
             out = x.detach()
         elif chosen == "retrieve":
             self._flush_due_windows(event.t + self.window_size)
-            out, info = self.mem.read(query=z, topk=32)
+            out, info = self.mem.read(
+                query=z,
+                topk=self.read_topk,
+                query_time=event.t,
+                beta=self.temporal_beta,
+                sigma=self.temporal_sigma,
+            )
             attn = info["attn"]
             indices = info.get("indices", [])
             metadata = info.get("metadata", [])
