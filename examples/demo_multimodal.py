@@ -1,8 +1,13 @@
 
+import logging
+
 import torch
 import torch.nn.functional as F
 
-from hippocampus import Hippocampus, Event
+from hippocampus import Event, Hippocampus
+from hippocampus.integrations import GraniteModelUnavailable, GraniteNanoEncoder
+
+logger = logging.getLogger(__name__)
 
 
 def build_multimodal_hippocampus():
@@ -36,6 +41,19 @@ def main(config: dict | None = None, hip: Hippocampus | None = None):
     jitter = {name: 0.02 * torch.randn(dims[name][0].in_features) for name in dims.keys()}
     A = {name: torch.randn(dims[name][0].in_features) for name in dims.keys()}
     B = {name: (A[name] + jitter[name]) for name in dims.keys()}
+
+    lang_dim = dims["language"][0].in_features
+    language_texts = [
+        "Episode A: a calm living room conversation about robotics on the Raspberry Pi.",
+        "Episode B: the same space later in the day discussing remote Runpod training runs.",
+    ]
+    try:
+        granite = GraniteNanoEncoder(target_dim=lang_dim)
+        language_embeddings = granite.encode_many(language_texts)
+        A["language"], B["language"] = language_embeddings
+    except GraniteModelUnavailable as exc:
+        logger.warning("Granite Nano unavailable (%s); falling back to gaussian language features", exc)
+        # Fallback already initialised in A/B dictionaries
 
     for tm, episode in [(t, A), (tB, B)]:
         hip(Event("vision", episode["vision"], t=tm), mode="encode")
