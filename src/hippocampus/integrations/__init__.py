@@ -1,5 +1,5 @@
 """Integration helpers for optional third-party modality encoders."""
 
-from .ibm_granite import GraniteModelUnavailable, GraniteNanoEncoder
+from .granite import GraniteModelUnavailable, GraniteNanoEncoder
 
 __all__ = ["GraniteModelUnavailable", "GraniteNanoEncoder"]

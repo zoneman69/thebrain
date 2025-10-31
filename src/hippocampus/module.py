@@ -118,6 +118,7 @@ class FastHebbMemory(nn.Module):
         value = value.detach().unsqueeze(0)
         s = torch.tensor([strength], device=self.device)
         self._ensure_capacity(context)
+        self.access_counter += 1.0
         self.K = torch.cat([self.K, key.to(self.device)], dim=0)
         self.V = torch.cat([self.V, value.to(self.device)], dim=0)
         self.strength = torch.cat([self.strength, s], dim=0)
@@ -135,9 +136,10 @@ class FastHebbMemory(nn.Module):
         logits = (q @ self.K.T) / self.tau
         if query_time is not None and beta > 0.0 and sigma > 0.0:
             mem_times = self.times.unsqueeze(0)
-            deltas = (query_time - mem_times) / sigma
-            temporal_prior = torch.exp(-0.5 * deltas.pow(2)) * beta
-            logits = logits + temporal_prior
+            delta = query_time - mem_times
+            sigma_sq = float(sigma) ** 2
+            penalty = float(beta) * (delta.pow(2) / (2.0 * sigma_sq))
+            logits = logits - penalty
         meta = []
         if topk is not None and self.K.shape[0] > topk:
             vals, idxs = torch.topk(logits, k=topk, dim=-1)
@@ -235,16 +237,29 @@ class Hippocampus(nn.Module):
         self.mem = FastHebbMemory(dim=shared_dim, capacity=capacity, tau=tau,
                                   max_total=max_total or capacity, max_per_context=max_per_context)
         self.decoders.to(self.mem.device)
-        self.fusion = nn.Linear(shared_dim * 2, shared_dim)
+        gate_width = shared_dim * (len(self.modalities) + 1)
+        self.fusion_gate = nn.Sequential(
+            nn.Linear(shared_dim, shared_dim // 2),
+            nn.GELU(),
+            nn.Linear(shared_dim // 2, 1)
+        )
+        self.window_fusion = nn.Sequential(
+            nn.Linear(gate_width, shared_dim),
+            nn.LayerNorm(shared_dim),
+            nn.GELU(),
+            nn.Linear(shared_dim, shared_dim)
+        )
         with torch.no_grad():
-            eye = torch.eye(shared_dim)
-            self.fusion.weight[:] = torch.cat([0.5 * eye, 0.5 * eye], dim=1)
-            self.fusion.bias.zero_()
-        self.modality_gates = nn.ParameterDict({
+            self.fusion_gate[-1].weight.zero_()
+            self.fusion_gate[-1].bias.zero_()
+            for layer in (self.window_fusion[0], self.window_fusion[-1]):
+                layer.weight.zero_()
+                layer.bias.zero_()
+        self.modality_bias = nn.ParameterDict({
             name: nn.Parameter(torch.zeros(1)) for name in self.modalities
         })
-        if "vision" in self.modality_gates:
-            self.modality_gates["vision"].data += 4.0
+        if "vision" in self.modality_bias:
+            self.modality_bias["vision"].data.fill_(2.5)
         affect_dim = input_dims.get("affect")
         if affect_dim is not None:
             self.affect_linear = nn.Linear(affect_dim, 1)
@@ -318,17 +333,23 @@ class Hippocampus(nn.Module):
         names = sorted(win.modalities.keys())
         device = self.mem.device
         encs = torch.stack([win.modalities[n].to(device) for n in names], dim=0)
-        avg_enc = encs.mean(dim=0)
-        gate_logits = torch.stack([self.modality_gates[n] for n in names]).squeeze(-1)
-        weights = torch.softmax(gate_logits, dim=0).unsqueeze(-1)
-        fused = torch.sum(weights * encs, dim=0)
+        gate_scores = self.fusion_gate(encs).squeeze(-1)
+        bias = torch.stack([self.modality_bias[n] for n in names]).squeeze(-1).to(device)
+        gate_scores = gate_scores + bias
+        weights = torch.softmax(gate_scores, dim=0).unsqueeze(-1)
+        gated = torch.sum(weights * encs, dim=0)
         window_center = win.t_start + self.window_size * 0.5
         time_code = sinusoidal_time_pos_enc(window_center * self.time_scale, self.time_dim).to(device)
         time_emb = self.time_mixer(time_code) * self.time_gain
-        fusion_input = torch.cat([fused, avg_enc], dim=-1)
-        fused_input = self.fusion(fusion_input)
-        fused_value = fused_input + time_emb
-        key = self.encode_dg(fused_value, t=window_center, already_timed=True)
+        concat = torch.cat([encs.reshape(-1), gated], dim=-1)
+        expected = self.window_fusion[0].in_features
+        if concat.shape[0] < expected:
+            concat = F.pad(concat, (0, expected - concat.shape[0]))
+        elif concat.shape[0] > expected:
+            concat = concat[:expected]
+        fused_delta = self.window_fusion(concat)
+        fused_content = gated + fused_delta
+        key = self.encode_dg(fused_content, t=window_center)
         metadata = {"modalities": {n: win.modalities[n].detach().cpu() for n in names},
                     "raw": {n: win.raw[n].detach().cpu() for n in names},
                     "targets": {n: win.modalities[n].detach().cpu() for n in names},
@@ -341,8 +362,8 @@ class Hippocampus(nn.Module):
             mean_affect = affect_stack.mean(dim=0)
             strength = F.softplus(self.affect_linear(mean_affect)).item()
         targets = {n: win.modalities[n].to(device) for n in names}
-        self.decoders.observe(fused_value.detach(), targets)
-        self.mem.write(key=key, value=fused_value, strength=strength, context=win.context,
+        self.decoders.observe(fused_content.detach(), targets)
+        self.mem.write(key=key, value=fused_content, strength=strength, context=win.context,
                        metadata=metadata, time=window_center)
 
     def _flush_due_windows(self, current_t: Optional[float] = None):
