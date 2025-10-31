@@ -1,10 +1,11 @@
 
 import torch
-from hippocampus import Hippocampus, Event
 import torch.nn.functional as F
 
-def main():
-    torch.manual_seed(42)
+from hippocampus import Hippocampus, Event
+
+
+def build_multimodal_hippocampus():
     input_dims = {
         "vision": 512,
         "cerebellum": 64,
@@ -13,40 +14,44 @@ def main():
         "language": 256,
         "affect": 16,
     }
-    hip = Hippocampus(input_dims=input_dims, shared_dim=192, time_dim=24, capacity=768, sparsity=0.05)
+    return Hippocampus(
+        input_dims=input_dims,
+        shared_dim=192,
+        time_dim=64,
+        capacity=1024,
+        sparsity=0.05,
+        novelty_threshold=0.25,
+        window_size=0.35,
+        tau=0.15,
+    )
 
-    # Episode A (scene 1)
+
+def main(config: dict | None = None, hip: Hippocampus | None = None):
+    torch.manual_seed((config or {}).get("seed", 42))
+    hip = hip or build_multimodal_hippocampus()
+    dims = hip.enc.encoders
+
     t = 0.0
-    A = {
-        "vision": torch.randn(input_dims["vision"]),
-        "cerebellum": torch.randn(input_dims["cerebellum"]),
-        "frontal": torch.randn(input_dims["frontal"]),
-        "auditory": torch.randn(input_dims["auditory"]),
-        "language": torch.randn(input_dims["language"]),
-        "affect": torch.randn(input_dims["affect"]),
-    }
-    # Episode B (scene 2): near-duplicate vision but different context (time separation)
-    tB = 5.0
-    B = {k: torch.randn(d) for k, d in input_dims.items()}
-    B["vision"] = A["vision"] + 0.1 * torch.randn_like(A["vision"])  # similar scene
+    tB = 10.0
+    jitter = {name: 0.02 * torch.randn(dims[name][0].in_features) for name in dims.keys()}
+    A = {name: torch.randn(dims[name][0].in_features) for name in dims.keys()}
+    B = {name: (A[name] + jitter[name]) for name in dims.keys()}
 
-    # Encode both episodes
-    for i, (tm, ep) in enumerate([(t, A), (tB, B)]):
-        hip(Event("vision", ep["vision"], t=tm), mode="encode")
-        hip(Event("cerebellum", ep["cerebellum"], t=tm + 0.05), mode="encode")
-        hip(Event("frontal", ep["frontal"], t=tm + 0.10), mode="encode")
-        hip(Event("auditory", ep["auditory"], t=tm + 0.15), mode="encode")
-        hip(Event("language", ep["language"], t=tm + 0.20), mode="encode")
-        hip(Event("affect", ep["affect"], t=tm + 0.25), mode="encode")
+    for tm, episode in [(t, A), (tB, B)]:
+        hip(Event("vision", episode["vision"], t=tm), mode="encode")
+        hip(Event("cerebellum", episode["cerebellum"], t=tm + 0.05), mode="encode")
+        hip(Event("frontal", episode["frontal"], t=tm + 0.10), mode="encode")
+        hip(Event("auditory", episode["auditory"], t=tm + 0.15), mode="encode")
+        hip(Event("language", episode["language"], t=tm + 0.20), mode="encode")
+        hip(Event("affect", episode["affect"], t=tm + 0.25, affect=episode["affect"]), mode="encode")
+    hip.flush_pending()
 
-    # Cue with language from episode A; expect retrieval toward A's fused encoding
     cue = A["language"] + 0.03 * torch.randn_like(A["language"])
-    res = hip(Event("language", cue, t=t + 0.22, prediction=A["language"]), mode="retrieve")
-    out = res["output"]
+    res = hip(Event("language", cue, t=tB + 0.5, prediction=A["language"]), mode="retrieve")
+    out = res["output"].detach()
 
-    # Compare to vision encodings of A and B
-    visA = hip.enc(A["vision"], "vision")
-    visB = hip.enc(B["vision"], "vision")
+    visA = hip.enc(A["vision"].to(hip.mem.device), "vision")
+    visB = hip.enc(B["vision"].to(hip.mem.device), "vision")
     simA = F.cosine_similarity(out, visA, dim=0).item()
     simB = F.cosine_similarity(out, visB, dim=0).item()
 
@@ -56,6 +61,7 @@ def main():
     print("Similarity to Episode B (vision):", round(simB, 3))
     print("Expected: simA > simB (time-based separation)")
     print("Memory size:", hip.mem.K.shape[0])
+
 
 if __name__ == "__main__":
     main()
