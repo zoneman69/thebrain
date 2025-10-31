@@ -8,6 +8,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .decoders import Decoders
+
 logger = logging.getLogger("hippocampus")
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -193,6 +195,8 @@ class Hippocampus(nn.Module):
                  orth_penalty: float = 0.0):
         super().__init__()
         self.enc = ModalityEncoder(input_dims, shared_dim)
+        with torch.random.fork_rng():
+            self.decoders = Decoders(shared_dim, input_dims)
         self.modalities = list(input_dims.keys())
         self.sep_sparsity = sparsity
         self.time_dim = time_dim
@@ -230,6 +234,34 @@ class Hippocampus(nn.Module):
             self.affect_linear = None
         self.pending: Dict[int, PendingWindow] = {}
         self.to(self.mem.device)
+
+    def decode(self, fused: torch.Tensor, target_modalities: Optional[List[str]] = None) -> Dict[str, torch.Tensor]:
+        """Decode a fused hippocampal representation back into requested modalities."""
+        modalities = target_modalities or list(self.decoders.available_modalities())
+        return self.decoders(fused.to(self.mem.device), modalities)
+
+    def reconstruction_losses(
+        self,
+        fused: torch.Tensor,
+        targets: Dict[str, torch.Tensor],
+        target_modalities: Optional[List[str]] = None,
+    ) -> Dict[str, Dict[str, torch.Tensor]]:
+        """Compute per-modality reconstruction losses (L1 and L2)."""
+
+        modalities = target_modalities or list(targets.keys())
+        recons = self.decode(fused, modalities)
+        losses: Dict[str, Dict[str, torch.Tensor]] = {}
+        for modality in modalities:
+            if modality not in targets:
+                raise KeyError(f"Missing target tensor for modality '{modality}'")
+            recon = recons[modality]
+            target = targets[modality].to(recon.device)
+            diff = recon - target
+            losses[modality] = {
+                "l1": diff.abs().mean(),
+                "l2": diff.pow(2).mean().sqrt(),
+            }
+        return losses
 
     def encode_dg(self, x: torch.Tensor, t: float) -> torch.Tensor:
         time_code = sinusoidal_time_pos_enc(t * self.time_scale, self.time_dim).to(x.device)
