@@ -12,7 +12,11 @@ hippocampus:
   sparsity: 0.05
   novelty_threshold: 0.25
   window_size: 0.35
-  tau: 0.15
+  tau: 0.1
+  read_topk: 1
+  temporal_beta: 1.5
+  temporal_sigma: 0.4
+  decoder_lambda: 0.01
   max_total: 2048
   max_per_context: 6
   orth_penalty: 0.0
