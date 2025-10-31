@@ -1,0 +1,63 @@
+name: runpod-refresh
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Download episodic logs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/pull_push_artifacts.py download \
+            --repo "${{ github.repository }}" \
+            --asset "episodic-logs*.pt" \
+            --output /tmp/episodic.pt \
+            --tag nightly || echo "No episodic logs artifact found"
+
+      - name: Train decoders
+        run: |
+          python scripts/train_cloud.py \
+            --config hippo.yaml \
+            --log-dir /tmp \
+            --output-dir artifacts \
+            --min-samples 1 || echo "Training skipped"
+
+      - name: Package weights
+        run: |
+          if [ -d artifacts ]; then
+            tar -czf weights.tar.gz -C artifacts .
+          else
+            echo "No artifacts directory to package"
+          fi
+
+      - name: Upload refreshed weights
+        if: hashFiles('weights.tar.gz') != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/pull_push_artifacts.py upload \
+            --repo "${{ github.repository }}" \
+            --file weights.tar.gz \
+            --tag nightly \
+            --name "weights-${{ github.run_id }}.tar.gz" \
+            --title "Nightly hippocampus weights" \
+            --overwrite
