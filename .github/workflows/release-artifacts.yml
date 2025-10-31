@@ -1,0 +1,27 @@
+name: Release artifacts
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install --upgrade pip
+      - run: pip install -e .[dev]
+      - run: python scripts/train_cloud.py --quick --output-dir artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/window_fusion.pt
+            artifacts/fusion_gate.pt
+            artifacts/mix.pt
+            artifacts/time_mixer.pt
+            artifacts/decoders/*.pt
+            artifacts/manifest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}

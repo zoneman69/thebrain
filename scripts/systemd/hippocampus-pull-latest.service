@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh hippocampus weights from the latest GitHub Release
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/hippocampus
+Environment=PYTHONUNBUFFERED=1
+Environment=HIPPO_REPO=braintrustai/thebrain
+ExecStart=/usr/bin/python3 /opt/hippocampus/scripts/pull_latest.py --repo=$HIPPO_REPO --dest=/opt/hippocampus/artifacts/latest.pt

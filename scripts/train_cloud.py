@@ -6,11 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, Tuple
 
 import torch
 
+from hippocampus import Event
 from hippocampus.cli import instantiate_hippocampus, load_config
 
 logger = logging.getLogger("train_cloud")
@@ -18,9 +20,9 @@ logger = logging.getLogger("train_cloud")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train hippocampus decoders from episodic logs")
-    parser.add_argument("--config", required=True, type=str, help="Path to hippocampus YAML config")
+    parser.add_argument("--config", type=str, default="hippo.yaml", help="Path to hippocampus YAML config")
     parser.add_argument(
-        "--log-dir", required=True, type=str, help="Directory containing episodic replay logs"
+        "--log-dir", type=str, help="Directory containing episodic replay logs"
     )
     parser.add_argument(
         "--output-dir", default="artifacts", type=str, help="Directory to store weight artifacts"
@@ -36,6 +38,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--lam", type=float, default=None, help="Optional ridge regression lambda override for decoders"
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Generate synthetic data instead of consuming a log directory",
     )
     return parser.parse_args()
 
@@ -102,12 +109,27 @@ def _batched_pairs(record: Dict[str, torch.Tensor]) -> Iterator[Tuple[torch.Tens
         yield fused[idx], {mod: tensor[idx] for mod, tensor in targets.items()}
 
 
+def _generate_quick_data(hip: "Hippocampus", exposures: int = 6) -> int:
+    """Populate the hippocampus with synthetic episodes for quick artifacts."""
+
+    dims = {name: hip.enc.encoders[name][0].in_features for name in hip.modalities}
+    t = 0.0
+    for idx in range(exposures):
+        base_feats = {name: torch.randn(dim) for name, dim in dims.items()}
+        for offset, modality in enumerate(sorted(dims.keys())):
+            dt = offset * 0.05
+            affect = base_feats.get("affect") if modality == "affect" else None
+            hip(Event(modality, base_feats[modality], t=t + dt, affect=affect), mode="encode")
+        t += hip.window_size * 1.5
+    hip.flush_pending()
+    return hip.mem.V.shape[0]
+
+
 def train_decoders(args: argparse.Namespace) -> Dict[str, int]:
+    if not args.quick and (args.log_dir is None or args.config is None):
+        raise SystemExit("--config and --log-dir are required unless --quick is provided")
     torch.set_num_threads(max(1, args.threads))
     config = load_config(args.config)
-    log_dir = Path(args.log_dir)
-    if not log_dir.exists():
-        raise FileNotFoundError(f"Log directory {log_dir} does not exist")
     hip = instantiate_hippocampus(config)
     if args.lam is not None:
         for decoder in hip.decoders.decoders.values():
@@ -115,31 +137,46 @@ def train_decoders(args: argparse.Namespace) -> Dict[str, int]:
     hip.eval()
 
     sample_count = 0
-    for record in iter_training_records(log_dir):
-        if not {"fused", "targets"}.issubset(record):
-            continue
-        for fused_vec, target_map in _batched_pairs(record):
-            hip.decoders.observe(fused_vec, target_map)
-            sample_count += 1
+    if args.quick:
+        sample_count = _generate_quick_data(hip)
+    else:
+        log_dir = Path(args.log_dir)
+        if not log_dir.exists():
+            raise FileNotFoundError(f"Log directory {log_dir} does not exist")
+        for record in iter_training_records(log_dir):
+            if not {"fused", "targets"}.issubset(record):
+                continue
+            for fused_vec, target_map in _batched_pairs(record):
+                hip.decoders.observe(fused_vec, target_map)
+                sample_count += 1
 
     if sample_count < args.min_samples:
+        source = args.log_dir or "synthetic quick run"
         raise RuntimeError(
-            f"Not enough samples ({sample_count}) collected from {args.log_dir!s}; "
+            f"Not enough samples ({sample_count}) collected from {source}; "
             f"need at least {args.min_samples}"
         )
 
     output_dir = Path(args.output_dir)
     decoder_dir = output_dir / "decoders"
     decoder_dir.mkdir(parents=True, exist_ok=True)
-    torch.save(hip.fusion.state_dict(), output_dir / "fused_head.pt")
+    torch.save(hip.window_fusion.state_dict(), output_dir / "window_fusion.pt")
+    torch.save(hip.fusion_gate.state_dict(), output_dir / "fusion_gate.pt")
     torch.save(hip.mix.state_dict(), output_dir / "mix.pt")
+    torch.save(hip.time_mixer.state_dict(), output_dir / "time_mixer.pt")
     for name, decoder in hip.decoders.decoders.items():
         torch.save(decoder.state_dict(), decoder_dir / f"{name}.pt")
     manifest = {
         "samples": sample_count,
         "shared_dim": hip.decoders.shared_dim,
         "modalities": sorted(hip.decoders.decoders.keys()),
-        "source_logs": str(Path(args.log_dir).resolve()),
+        "artifacts": [
+            "window_fusion.pt",
+            "fusion_gate.pt",
+            "mix.pt",
+            "time_mixer.pt",
+        ],
+        "source_logs": str(Path(args.log_dir).resolve()) if args.log_dir else "synthetic",
     }
     with (output_dir / "manifest.json").open("w", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2)
