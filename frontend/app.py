@@ -81,7 +81,7 @@ while True:
             mem_size = int(df.get("memory_size", pd.Series([np.nan])).dropna().iloc[-1]) if "memory_size" in df else np.nan
             pending = int(df.get("pending_windows", pd.Series([np.nan])).dropna().iloc[-1]) if "pending_windows" in df else np.nan
 
-            k1, k2, k3, k4 = img_cols[1].columns(1)
+            k1, k2, k3, k4 = img_cols[1].columns(4)
             k1.metric("Encodes", writes)
             k2.metric("Retrieves", retrieves)
             k3.metric("Memory size", mem_size if not np.isnan(mem_size) else "-")
