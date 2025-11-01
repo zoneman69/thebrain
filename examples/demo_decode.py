@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 
 from hippocampus import Event, Hippocampus
+from hippocampus.telemetry import log_event
 
 
 def build_demo_hippocampus() -> Hippocampus:
@@ -100,6 +101,9 @@ def main():
     for modality in recon_modalities:
         cosine = F.cosine_similarity(recon_A[modality], targets_enc_A[modality], dim=0).item()
         print(f"  {modality.title()} cosine vs episode A: {cosine:.3f}")
+    # after computing each event dict:
+    print(json.dumps(ev))   # keep your print
+    log_event(ev)           # also write to /tmp/hippo.jsonl
 
 
 if __name__ == "__main__":
