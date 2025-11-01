@@ -8,6 +8,10 @@ from hippocampus.telemetry import log_event
 # Where to save the current frame for the frontend to read
 FRAME_PATH = os.environ.get("HIPPO_FRAME", "/tmp/hippo_latest.jpg")
 
+CTRL_PATH = os.environ.get("HIPPO_CTRL", "/tmp/hippo_cmd.json")
+BOOK_DIR = os.environ.get("HIPPO_BOOK", "/tmp/hippo_bookmarks")
+os.makedirs(BOOK_DIR, exist_ok=True)
+
 # --- Hippocampus config (windowing + temporal prior help a lot) ---
 hip = Hippocampus(
     input_dims={"vision": 576},   # MobileNetV3-Small penultimate feature size
@@ -22,6 +26,19 @@ hip = Hippocampus(
     temporal_beta=2.0,
     temporal_sigma=0.6,
 )
+
+def read_command():
+    if not os.path.exists(CTRL_PATH):
+        return None
+    try:
+        with open(CTRL_PATH, "r") as f:
+            cmd = json.load(f)
+        # clear after reading
+        os.remove(CTRL_PATH)
+        return cmd
+    except Exception:
+        return None
+
 
 # --- MobileNetV3-Small feature extractor ---
 # NOTE: if the weights download fails (no internet), change weights=None
@@ -60,6 +77,7 @@ try:
         ok, frame = cap.read()
         if not ok:
             break
+        
 
         # (A) feature extraction
         x = pre(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).unsqueeze(0)
@@ -89,6 +107,59 @@ try:
             pred_for_novelty = pred
 
         res = hip(Event("vision", feat, t=t, prediction=pred_for_novelty), mode=mode)
+        # ---- handle control commands from the dashboard ----
+        cmd = read_command()
+        if cmd:
+            if cmd.get("type") == "retrieve_now":
+                # do a retrieval anchored to now; reuse last feat as cue
+                cue_t = t
+                cue = feat
+                res_now = hip(Event("vision", cue, t=cue_t, prediction=pred_for_novelty), mode="retrieve")
+                # Extract attention info if present
+                meta = (res_now.get("metadata") or [None])[0] or {}
+                attn_pairs = meta.get("attn_topk") or []
+                attn_idx = [int(i) for i, _ in attn_pairs]
+                attn_s = [float(s) for _, s in attn_pairs]
+                ev_now = {
+                    "event_modality": "vision",
+                    "t": float(cue_t),
+                    "mode": res_now["mode"],
+                    "novelty": float(res_now["novelty"]),
+                    "memory_size": int(hip.mem.K.shape[0]),
+                    "pending_windows": int(res_now.get("pending_windows", 0)),
+                    "attn_indices": attn_idx or None,
+                    "attn_scores": attn_s or None,
+                    "action": "retrieve_now"
+                }
+                print(json.dumps(ev_now)); log_event(ev_now)
+        
+            elif cmd.get("type") == "bookmark":
+                # save frame + a small json note
+                ts = int(t)
+                fname = os.path.join(BOOK_DIR, f"book_{ts}.jpg")
+                jname = os.path.join(BOOK_DIR, f"book_{ts}.json")
+                try:
+                    cv2.imwrite(fname, frame)
+                except Exception as e:
+                    print("Bookmark save failed:", e)
+                note = {
+                    "t": float(t),
+                    "mem_size": int(hip.mem.K.shape[0]),
+                    "mode": res["mode"],
+                    "novelty": float(res["novelty"]),
+                    "path": fname
+                }
+                with open(jname, "w") as f:
+                    json.dump(note, f)
+                # also log a telemetry line so it shows up in the table
+                note["action"] = "bookmark"
+                print(json.dumps(note)); log_event(note)
+        
+            elif cmd.get("type") == "set_cooldown":
+                val = float(cmd.get("seconds", encode_cooldown))
+                encode_cooldown = max(0.0, min(3.0, val))  # clamp 0–3s
+                print(json.dumps({"action":"set_cooldown","value":encode_cooldown}))
+
 
         if res["mode"] == "encode":
             last_encode_t = t
