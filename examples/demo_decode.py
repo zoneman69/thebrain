@@ -1,5 +1,3 @@
-"""Demonstration of cross-modal reconstruction using hippocampal decoders."""
-
 import json
 import torch
 import torch.nn.functional as F
