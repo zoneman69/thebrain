@@ -233,19 +233,27 @@ try:
             r_v = hip(Event("vision", vfeat, t=t, prediction=vpred),  mode=mode)
             r_a = hip(Event("auditory", a_emb_t, t=t+0.05, prediction=apred), mode=mode)
 
-        # Save frame & spectrogram periodically
+        # Save frame atomically
         if t - last_frame_save > 0.5:
-            try: cv2.imwrite(FRAME_PATH, frame)
-            except Exception as e: print("Could not save frame:", e)
+            try:
+                tmp = f"{FRAME_PATH}.tmp"
+                cv2.imwrite(tmp, frame)
+                os.replace(tmp, FRAME_PATH)  # atomic rename
+            except Exception as e:
+                print("Could not save frame:", e)
             last_frame_save = t
+        
+        # Save spectrogram atomically
         if t - last_spec_save > 1.0:
             try:
                 plt.figure(figsize=(4,2), dpi=100)
                 plt.imshow(S_log, aspect="auto", origin="lower")
                 plt.title("Log-spectrogram")
                 plt.tight_layout()
-                plt.savefig(SPEC_PATH)
+                tmp = f"{SPEC_PATH}.tmp"
+                plt.savefig(tmp)
                 plt.close()
+                os.replace(tmp, SPEC_PATH)  # atomic rename
             except Exception as e:
                 print("Could not save spectrogram:", e)
             last_spec_save = t
