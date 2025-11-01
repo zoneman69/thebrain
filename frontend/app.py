@@ -83,7 +83,7 @@ while True:
                     st.line_chart(df.set_index("time")["novelty"])
                 if "event_modality" in df and "time" in df:
                     st.subheader("Events timeline")
-                    st.dataframe(df[["time","event_modality","mode","t"]].tail(50), use_container_width=True)
+                    st.dataframe(df[["time","event_modality","mode","t"]].tail(50), width='stretch')
             with cols[1]:
                 if set(["attn_indices","attn_scores"]).issubset(df.columns):
                     st.subheader("Last retrieval — attention")
@@ -102,7 +102,7 @@ while True:
                     st.line_chart(rec)
 
             with st.expander("Raw tail (last 200 rows)"):
-                st.dataframe(df.tail(200), use_container_width=True)
+                st.dataframe(df.tail(200), width='stretch')
 
     last_reload = time.time()
     time.sleep(refresh)
