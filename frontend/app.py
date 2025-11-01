@@ -13,7 +13,6 @@ CTRL_PATH  = os.environ.get("HIPPO_CTRL", "/tmp/hippo_cmd.json")
 BOOK_DIR   = os.environ.get("HIPPO_BOOK", "/tmp/hippo_bookmarks")
 SPEC_PATH  = os.environ.get("HIPPO_SPEC", "/tmp/hippo_spec.png")
 
-# Ensure bookmark dir exists
 Path(BOOK_DIR).mkdir(parents=True, exist_ok=True)
 
 st.set_page_config(page_title="TheBrain | Hippocampus", layout="wide")
@@ -31,6 +30,15 @@ with col1:
     max_lines  = st.number_input("Max lines to load", min_value=100, max_value=200000, value=10000, step=500)
 
     st.divider()
+
+    # Language input → feed
+    lang_text = st.text_input("Language input (press Send to encode)", "")
+    if st.button("📨 Send text"):
+        Path(ctrl_path).write_text(json.dumps({"type":"language","text": lang_text}))
+        st.toast("Sent language event", icon="📨")
+
+    st.divider()
+
     # On-demand actions: write commands to CTRL_PATH
     c1, c2 = st.columns(2)
     with c1:
@@ -38,8 +46,9 @@ with col1:
             Path(ctrl_path).write_text(json.dumps({"type": "retrieve_now"}))
             st.toast("Sent: retrieve_now", icon="🔎")
     with c2:
+        label_val = st.text_input("Bookmark label", "")
         if st.button("🔖 Bookmark frame"):
-            Path(ctrl_path).write_text(json.dumps({"type": "bookmark"}))
+            Path(ctrl_path).write_text(json.dumps({"type": "bookmark", "label": label_val}))
             st.toast("Sent: bookmark", icon="📌")
 
     cool = st.slider("Encode cooldown (s)", 0.0, 3.0, 1.0, 0.1)
@@ -50,10 +59,8 @@ with col1:
 # ------------------ Helpers ------------------
 @st.cache_data(show_spinner=False)
 def read_tail(path: str, n: int) -> List[str]:
-    """Read approximately the last n lines from a potentially large file."""
     p = Path(path)
-    if not p.exists():
-        return []
+    if not p.exists(): return []
     with open(p, "rb") as f:
         f.seek(0, 2)
         block = 4096
@@ -74,16 +81,12 @@ def load_df(path: str, n: int) -> pd.DataFrame:
             rows.append(json.loads(ln))
         except Exception:
             continue
-    if not rows:
-        return pd.DataFrame()
+    if not rows: return pd.DataFrame()
     df = pd.DataFrame(rows)
-
-    # time column: prefer 'ts' if present, else derive from 't'
     if "ts" in df.columns:
         df["time"] = pd.to_datetime(df["ts"], unit="s", errors="coerce")
     elif "t" in df.columns:
         df["time"] = pd.to_datetime(df["t"], unit="s", errors="coerce")
-
     if "time" in df.columns:
         df = df.sort_values("time")
     return df
@@ -96,7 +99,7 @@ while True:
 
     with placeholder.container():
         if df.empty:
-            st.info("No telemetry yet. Run a demo (e.g., vision_feed or multimodal_feed) that calls telemetry.log_event(...).")
+            st.info("No telemetry yet. Run a demo (e.g., multimodal_feed) that calls telemetry.log_event(...).")
         else:
             # ======= Live camera & audio spectrogram + KPIs =======
             top = st.columns([2, 1])
@@ -131,7 +134,6 @@ while True:
             # ======= Charts & Tables =======
             cols = st.columns([3, 2])
 
-            # Left column: novelty + events
             with cols[0]:
                 if {"novelty","time"}.issubset(df.columns):
                     st.subheader("Novelty over time")
@@ -143,7 +145,6 @@ while True:
                     if cols_to_show:
                         st.dataframe(df[cols_to_show].tail(50), width='stretch')
 
-            # Right column: motion/audio + attention + recon
             with cols[1]:
                 if {"l2_to_pred","time"}.issubset(df.columns):
                     st.subheader("Vision motion proxy (L2 to EMA)")
@@ -157,10 +158,18 @@ while True:
                     st.subheader("Audio novelty proxy (L2 to EMA)")
                     st.line_chart(df.set_index("time")["l2_to_pred_audio"], width='stretch')
 
-                # Attention from last retrieve (if logged by multimodal_feed on retrieve_now)
+                # Attention + selected window (from retrieve_now)
+                if {"selected_window_id","selected_t_window"}.issubset(df.columns):
+                    last_r = df[df.get("action","") == "retrieve_now"].tail(1)
+                    if not last_r.empty:
+                        st.subheader("Last retrieve — selected window")
+                        wid = last_r["selected_window_id"].iloc[0]
+                        twin = last_r["selected_t_window"].iloc[0]
+                        st.write(f"**window_id:** {wid}   |   **t_window:** {twin}")
+
                 if {"attn_indices","attn_scores"}.issubset(df.columns):
-                    st.subheader("Last retrieval — attention")
-                    last_ret = df[df["mode"] == "retrieve"].tail(1)
+                    st.subheader("Last retrieve — attention")
+                    last_ret = df[df.get("action","") == "retrieve_now"].tail(1)
                     if not last_ret.empty:
                         idxs = last_ret["attn_indices"].iloc[0]
                         scs  = last_ret["attn_scores"].iloc[0]
@@ -168,11 +177,12 @@ while True:
                             attn_df = pd.DataFrame({"memory_id": idxs, "score": scs}).sort_values("score", ascending=False)
                             st.bar_chart(attn_df.set_index("memory_id")["score"], width='stretch')
 
-                # Reconstruction cosines (from demo_decode)
+                # Cross-modal reconstruction cosines (from retrieve_now)
                 recon_cols = [c for c in df.columns if c.startswith("recon/")]
                 if recon_cols and "time" in df.columns:
-                    st.subheader("Reconstruction cosines")
-                    rec = df.dropna(subset=recon_cols).set_index("time")[recon_cols].tail(200)
+                    st.subheader("Cross-modal reconstruction")
+                    rec = df[df.get("action","") == "retrieve_now"]
+                    rec = rec.dropna(subset=recon_cols).set_index("time")[recon_cols].tail(200)
                     if not rec.empty:
                         st.line_chart(rec, width='stretch')
 
@@ -182,7 +192,6 @@ while True:
                 if not items:
                     st.write("No bookmarks yet.")
                 else:
-                    # show up to 10, newest first
                     for j in items[-10:][::-1]:
                         try:
                             meta = json.loads(Path(j).read_text())
@@ -192,14 +201,17 @@ while True:
                         with cols_b[0]:
                             imgp = meta.get("path")
                             if imgp and Path(imgp).exists():
-                                st.image(imgp, caption=Path(imgp).name, width='stretch')
+                                cap = meta.get("label") or Path(imgp).name
+                                st.image(imgp, caption=cap, width='stretch')
                         with cols_b[1]:
                             t_val = meta.get("t")
                             mode  = meta.get("mode")
                             nov   = meta.get("novelty")
                             ms    = meta.get("mem_size")
+                            lbl   = meta.get("label")
                             st.write(f"**t:** {t_val:.3f}  |  **mode:** {mode}  |  **novelty:** {nov:.3f}")
                             st.write(f"**memory size:** {ms}")
+                            if lbl: st.write(f"**label:** {lbl}")
 
             # ======= Raw tail =======
             with st.expander("Raw tail (last 200 rows)"):
