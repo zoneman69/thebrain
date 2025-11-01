@@ -240,7 +240,7 @@ while True:
                 if not items:
                     st.write("No bookmarks yet.")
                 else:
-                    q = st.text_input("Filter by label contains")
+                    q = st.text_input("Filter by label contains", key="bookmark_filter_query")
                     shown = 0
                     for j in items[::-1]:
                         try:
