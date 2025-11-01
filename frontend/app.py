@@ -11,6 +11,7 @@ LOG_PATH   = os.environ.get("HIPPO_LOG",  "/tmp/hippo.jsonl")
 FRAME_PATH = os.environ.get("HIPPO_FRAME","/tmp/hippo_latest.jpg")
 CTRL_PATH  = os.environ.get("HIPPO_CTRL", "/tmp/hippo_cmd.json")
 BOOK_DIR   = os.environ.get("HIPPO_BOOK", "/tmp/hippo_bookmarks")
+SPEC_PATH  = os.environ.get("HIPPO_SPEC", "/tmp/hippo_spec.png")
 
 # Ensure bookmark dir exists
 Path(BOOK_DIR).mkdir(parents=True, exist_ok=True)
@@ -23,6 +24,7 @@ col0, col1 = st.columns([3, 1])
 with col1:
     log_path   = st.text_input("Log file", LOG_PATH)
     frame_path = st.text_input("Frame path", FRAME_PATH)
+    spec_path  = st.text_input("Spectrogram path", SPEC_PATH)
     ctrl_path  = st.text_input("Control file", CTRL_PATH)
     book_dir   = st.text_input("Bookmarks dir", BOOK_DIR)
     refresh    = st.slider("Auto-refresh (sec)", 1, 10, 2)
@@ -94,16 +96,24 @@ while True:
 
     with placeholder.container():
         if df.empty:
-            st.info("No telemetry yet. Run a demo (e.g., vision_feed) that calls telemetry.log_event(...).")
+            st.info("No telemetry yet. Run a demo (e.g., vision_feed or multimodal_feed) that calls telemetry.log_event(...).")
         else:
-            # ======= Live camera + KPIs =======
-            img_cols = st.columns([2, 1])
-            with img_cols[0]:
-                st.subheader("Live camera")
-                if Path(frame_path).exists():
-                    st.image(frame_path, caption="hippo_latest.jpg", width='stretch')
-                else:
-                    st.info("Waiting for live frame…")
+            # ======= Live camera & audio spectrogram + KPIs =======
+            top = st.columns([2, 1])
+            with top[0]:
+                c_left, c_right = st.columns([1, 1])
+                with c_left:
+                    st.subheader("Live camera")
+                    if Path(frame_path).exists():
+                        st.image(frame_path, caption="hippo_latest.jpg", width='stretch')
+                    else:
+                        st.info("Waiting for live frame…")
+                with c_right:
+                    st.subheader("Audio: Log-spectrogram")
+                    if Path(spec_path).exists():
+                        st.image(spec_path, caption="hippo_spec.png", width='stretch')
+                    else:
+                        st.info("Waiting for spectrogram…")
 
             # KPIs on the right
             writes     = (df["mode"] == "encode").sum() if "mode" in df else 0
@@ -111,7 +121,7 @@ while True:
             mem_size   = int(df.get("memory_size", pd.Series([np.nan])).dropna().iloc[-1]) if "memory_size" in df else np.nan
             pending    = int(df.get("pending_windows", pd.Series([np.nan])).dropna().iloc[-1]) if "pending_windows" in df else np.nan
 
-            with img_cols[1]:
+            with top[1]:
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("Encodes", writes)
                 k2.metric("Retrieves", retrieves)
@@ -120,22 +130,34 @@ while True:
 
             # ======= Charts & Tables =======
             cols = st.columns([3, 2])
+
+            # Left column: novelty + events
             with cols[0]:
-                if "novelty" in df.columns and "time" in df.columns:
+                if {"novelty","time"}.issubset(df.columns):
                     st.subheader("Novelty over time")
                     st.line_chart(df.set_index("time")["novelty"], width='stretch')
 
-                if "event_modality" in df.columns and "time" in df.columns:
+                if {"event_modality","time"}.issubset(df.columns):
                     st.subheader("Events timeline")
                     cols_to_show = [c for c in ["time", "event_modality", "mode", "t"] if c in df.columns]
-                    st.dataframe(df[cols_to_show].tail(50), width='stretch')
+                    if cols_to_show:
+                        st.dataframe(df[cols_to_show].tail(50), width='stretch')
 
+            # Right column: motion/audio + attention + recon
             with cols[1]:
-                if {"l2_to_pred", "time"}.issubset(df.columns):
-                    st.subheader("L2 to EMA-pred (motion proxy)")
+                if {"l2_to_pred","time"}.issubset(df.columns):
+                    st.subheader("Vision motion proxy (L2 to EMA)")
                     st.line_chart(df.set_index("time")["l2_to_pred"], width='stretch')
 
-                # Attention from last retrieve (if logged by vision_feed on retrieve_now)
+                if {"audio_db","time"}.issubset(df.columns):
+                    st.subheader("Audio level (dB)")
+                    st.line_chart(df.set_index("time")["audio_db"], width='stretch')
+
+                if {"l2_to_pred_audio","time"}.issubset(df.columns):
+                    st.subheader("Audio novelty proxy (L2 to EMA)")
+                    st.line_chart(df.set_index("time")["l2_to_pred_audio"], width='stretch')
+
+                # Attention from last retrieve (if logged by multimodal_feed on retrieve_now)
                 if {"attn_indices","attn_scores"}.issubset(df.columns):
                     st.subheader("Last retrieval — attention")
                     last_ret = df[df["mode"] == "retrieve"].tail(1)
@@ -181,7 +203,6 @@ while True:
 
             # ======= Raw tail =======
             with st.expander("Raw tail (last 200 rows)"):
-                tail_cols = [c for c in df.columns]  # show whatever is there
-                st.dataframe(df[tail_cols].tail(200), width='stretch')
+                st.dataframe(df.tail(200), width='stretch')
 
     time.sleep(refresh)
