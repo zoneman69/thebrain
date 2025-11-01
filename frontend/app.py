@@ -1,6 +1,7 @@
 import os, json, time
 from pathlib import Path
 from typing import List, Dict, Any
+from PIL import UnidentifiedImageError
 
 import streamlit as st
 import pandas as pd
@@ -73,6 +74,24 @@ def read_tail(path: str, n: int) -> List[str]:
         lines = data.splitlines()[-n:]
     return [l.decode("utf-8", errors="ignore") for l in lines]
 
+def show_image_safe(path: str, caption: str):
+    p = Path(path)
+    if not p.exists() or p.stat().st_size == 0:
+        st.info(f"Waiting for {caption}…")
+        return
+    # small retry loop to handle very recent writes
+    for _ in range(3):
+        try:
+            with open(p, "rb") as f:
+                data = f.read()
+            st.image(data, caption=caption, width='stretch')
+            return
+        except UnidentifiedImageError:
+            time.sleep(0.1)
+        except Exception:
+            time.sleep(0.1)
+    st.warning(f"Could not render {caption} yet.")
+
 def load_df(path: str, n: int) -> pd.DataFrame:
     lines = read_tail(path, n)
     rows: List[Dict[str, Any]] = []
@@ -108,13 +127,13 @@ while True:
                 with c_left:
                     st.subheader("Live camera")
                     if Path(frame_path).exists():
-                        st.image(frame_path, caption="hippo_latest.jpg", width='stretch')
+                        show_image_safe(frame_path, "hippo_latest.jpg")
                     else:
                         st.info("Waiting for live frame…")
                 with c_right:
                     st.subheader("Audio: Log-spectrogram")
                     if Path(spec_path).exists():
-                        st.image(spec_path, caption="hippo_spec.png", width='stretch')
+                        show_image_safe(spec_path, "hippo_spec.png")
                     else:
                         st.info("Waiting for spectrogram…")
 
