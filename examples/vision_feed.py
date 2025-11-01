@@ -1,6 +1,11 @@
 import time, cv2, torch, torchvision
 from hippocampus import Hippocampus, Event
 
+import os, json
+from hippocampus.telemetry import log_event
+
+FRAME_PATH = os.environ.get("HIPPO_FRAME", "/tmp/hippo_latest.jpg")
+
 # --- Hippocampus config (windowing + temporal prior help a lot) ---
 hip = Hippocampus(
     input_dims={"vision": 576},
