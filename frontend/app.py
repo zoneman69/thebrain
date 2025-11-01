@@ -136,7 +136,9 @@ placeholder = st.empty()
 while True:
     df = load_df(log_path, int(max_lines))
 
-    with placeholder.container():
+    container = placeholder.container()
+
+    with container:
         if df.empty:
             st.info("No telemetry yet. Run a demo (e.g., multimodal_feed) that calls telemetry.log_event(...).")
         else:
@@ -275,3 +277,4 @@ while True:
                 st.dataframe(df.tail(200), width='stretch')
 
     time.sleep(refresh)
+    container.empty()
