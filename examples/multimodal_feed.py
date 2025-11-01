@@ -313,6 +313,44 @@ try:
                         "pending_windows": int(r_l.get("pending_windows", 0)),
                     }
                     print(json.dumps(ev_l)); log_event(ev_l)
+            elif ctype == "retrieve_with_text":
+                text = (cmd.get("text") or "").strip()
+                if text:
+                    lcue = encode_text(text)
+                    res = hip(Event("language", lcue, t=t+0.2, prediction=ema_lang), mode="retrieve")
+                    fused = res["output"]
+                    recon = hip.decode(fused, ["vision", "auditory", "language"])
+
+                    tgt_v = last_vfeat if last_vfeat is not None else torch.zeros_like(recon["vision"])
+                    tgt_a = last_aemb if last_aemb is not None else torch.zeros_like(recon["auditory"])
+                    tgt_l = lcue
+
+                    cos_v = float(F.cosine_similarity(recon["vision"], tgt_v, dim=0))
+                    cos_a = float(F.cosine_similarity(recon["auditory"], tgt_a, dim=0))
+                    cos_l = float(F.cosine_similarity(recon["language"], tgt_l, dim=0))
+
+                    meta = (res.get("metadata") or [None])[0] or {}
+                    attn_pairs = meta.get("attn_topk") or []
+                    attn_idx = [int(i) for i, _ in attn_pairs]
+                    attn_s = [float(s) for _, s in attn_pairs]
+
+                    ev_r = {
+                        "event_modality": "language",
+                        "t": float(t),
+                        "mode": res["mode"],
+                        "novelty": float(res["novelty"]),
+                        "memory_size": int(hip.mem.K.shape[0]),
+                        "pending_windows": int(res.get("pending_windows", 0)),
+                        "attn_indices": attn_idx or None,
+                        "attn_scores": attn_s or None,
+                        "selected_window_id": meta.get("window_id"),
+                        "selected_t_window": meta.get("t_window"),
+                        "action": "retrieve_with_text",
+                        "recon/vision_cos": cos_v,
+                        "recon/auditory_cos": cos_a,
+                        "recon/language_cos": cos_l,
+                    }
+                    print(json.dumps(ev_r)); log_event(ev_r)
             elif ctype == "retrieve_now":
                 # cue = last seen vision; retrieve and decode into all modalities
                 cue = last_vfeat if last_vfeat is not None else vfeat
