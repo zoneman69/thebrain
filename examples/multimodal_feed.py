@@ -233,30 +233,36 @@ try:
             r_v = hip(Event("vision", vfeat, t=t, prediction=vpred),  mode=mode)
             r_a = hip(Event("auditory", a_emb_t, t=t+0.05, prediction=apred), mode=mode)
 
-        # Save frame atomically
+        # Save frame atomically (~2 Hz)
         if t - last_frame_save > 0.5:
             try:
-                tmp = f"{FRAME_PATH}.tmp"
-                cv2.imwrite(tmp, frame)
-                os.replace(tmp, FRAME_PATH)  # atomic rename
+                ok_enc, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                if ok_enc:
+                    tmp = FRAME_PATH + ".tmp"  # arbitrary suffix; we write raw bytes
+                    with open(tmp, "wb") as f:
+                        f.write(buf.tobytes())
+                    os.replace(tmp, FRAME_PATH)  # atomic rename
+                else:
+                    print("Could not encode frame to JPEG")
             except Exception as e:
                 print("Could not save frame:", e)
             last_frame_save = t
         
-        # Save spectrogram atomically
+        # Save spectrogram atomically (~1 Hz)
         if t - last_spec_save > 1.0:
             try:
                 plt.figure(figsize=(4,2), dpi=100)
                 plt.imshow(S_log, aspect="auto", origin="lower")
                 plt.title("Log-spectrogram")
                 plt.tight_layout()
-                tmp = f"{SPEC_PATH}.tmp"
-                plt.savefig(tmp)
+                tmp = SPEC_PATH + ".tmp"     # temp path with arbitrary suffix
+                plt.savefig(tmp, format="png")  # tell matplotlib it's a PNG
                 plt.close()
-                os.replace(tmp, SPEC_PATH)  # atomic rename
+                os.replace(tmp, SPEC_PATH)   # atomic rename
             except Exception as e:
                 print("Could not save spectrogram:", e)
             last_spec_save = t
+
 
         # Track last encode
         if r_v["mode"] == "encode" or r_a["mode"] == "encode":
