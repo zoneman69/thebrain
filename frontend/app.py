@@ -32,11 +32,31 @@ with col1:
 
     st.divider()
 
-    # Language input → feed
-    lang_text = st.text_input("Language input (press Send to encode)", "")
-    if st.button("📨 Send text"):
-        Path(ctrl_path).write_text(json.dumps({"type":"language","text": lang_text}))
-        st.toast("Sent language event", icon="📨")
+    # Language input → feed / retrieve
+    lang_text = st.text_input("Language input", "")
+    c_lang1, c_lang2 = st.columns(2)
+    with c_lang1:
+        if st.button("📨 Send text (encode)"):
+            Path(ctrl_path).write_text(json.dumps({"type": "language", "text": lang_text}))
+            st.toast("Sent language event", icon="📨")
+    with c_lang2:
+        if st.button("🔎 Retrieve with text cue"):
+            Path(ctrl_path).write_text(json.dumps({"type": "retrieve_with_text", "text": lang_text}))
+            st.toast("Retrieving with text cue…", icon="🔎")
+
+    st.divider()
+
+    # Snapshots save/load
+    snap_dir = Path("/tmp/hippo_snaps"); snap_dir.mkdir(exist_ok=True)
+    snap_path = snap_dir / f"snap_{int(time.time())}.pt"
+    if st.button("💾 Save snapshot"):
+        Path(ctrl_path).write_text(json.dumps({"type": "save_snapshot", "path": str(snap_path)}))
+        st.toast(f"Saving to {snap_path}", icon="💾")
+
+    load_in = st.text_input("Load snapshot path", "")
+    if st.button("📂 Load snapshot") and load_in:
+        Path(ctrl_path).write_text(json.dumps({"type": "load_snapshot", "path": load_in}))
+        st.toast(f"Loading {load_in}", icon="📂")
 
     st.divider()
 
@@ -177,9 +197,12 @@ while True:
                     st.subheader("Audio novelty proxy (L2 to EMA)")
                     st.line_chart(df.set_index("time")["l2_to_pred_audio"], width='stretch')
 
-                # Attention + selected window (from retrieve_now)
+                # Attention + selected window (from retrieve actions)
                 if {"selected_window_id","selected_t_window"}.issubset(df.columns):
-                    last_r = df[df.get("action","") == "retrieve_now"].tail(1)
+                    if "action" in df.columns:
+                        last_r = df[df["action"].isin(["retrieve_now", "retrieve_with_text"])].tail(1)
+                    else:
+                        last_r = df.tail(1)
                     if not last_r.empty:
                         st.subheader("Last retrieve — selected window")
                         wid = last_r["selected_window_id"].iloc[0]
@@ -188,7 +211,10 @@ while True:
 
                 if {"attn_indices","attn_scores"}.issubset(df.columns):
                     st.subheader("Last retrieve — attention")
-                    last_ret = df[df.get("action","") == "retrieve_now"].tail(1)
+                    if "action" in df.columns:
+                        last_ret = df[df["action"].isin(["retrieve_now", "retrieve_with_text"])].tail(1)
+                    else:
+                        last_ret = df.tail(1)
                     if not last_ret.empty:
                         idxs = last_ret["attn_indices"].iloc[0]
                         scs  = last_ret["attn_scores"].iloc[0]
@@ -196,11 +222,14 @@ while True:
                             attn_df = pd.DataFrame({"memory_id": idxs, "score": scs}).sort_values("score", ascending=False)
                             st.bar_chart(attn_df.set_index("memory_id")["score"], width='stretch')
 
-                # Cross-modal reconstruction cosines (from retrieve_now)
+                # Cross-modal reconstruction cosines (from retrieve actions)
                 recon_cols = [c for c in df.columns if c.startswith("recon/")]
                 if recon_cols and "time" in df.columns:
                     st.subheader("Cross-modal reconstruction")
-                    rec = df[df.get("action","") == "retrieve_now"]
+                    if "action" in df.columns:
+                        rec = df[df["action"].isin(["retrieve_now", "retrieve_with_text"])]
+                    else:
+                        rec = df.copy()
                     rec = rec.dropna(subset=recon_cols).set_index("time")[recon_cols].tail(200)
                     if not rec.empty:
                         st.line_chart(rec, width='stretch')
@@ -211,26 +240,35 @@ while True:
                 if not items:
                     st.write("No bookmarks yet.")
                 else:
-                    for j in items[-10:][::-1]:
+                    q = st.text_input("Filter by label contains")
+                    shown = 0
+                    for j in items[::-1]:
                         try:
                             meta = json.loads(Path(j).read_text())
                         except Exception:
+                            continue
+                        lbl = (meta.get("label") or "")
+                        if q and q.lower() not in lbl.lower():
                             continue
                         cols_b = st.columns([1, 3])
                         with cols_b[0]:
                             imgp = meta.get("path")
                             if imgp and Path(imgp).exists():
-                                cap = meta.get("label") or Path(imgp).name
+                                cap = lbl or Path(imgp).name
                                 st.image(imgp, caption=cap, width='stretch')
                         with cols_b[1]:
                             t_val = meta.get("t")
                             mode  = meta.get("mode")
                             nov   = meta.get("novelty")
                             ms    = meta.get("mem_size")
-                            lbl   = meta.get("label")
                             st.write(f"**t:** {t_val:.3f}  |  **mode:** {mode}  |  **novelty:** {nov:.3f}")
                             st.write(f"**memory size:** {ms}")
                             if lbl: st.write(f"**label:** {lbl}")
+                        shown += 1
+                        if shown >= 10:
+                            break
+                    if shown == 0:
+                        st.write("No bookmarks match filter." if q else "No bookmarks yet.")
 
             # ======= Raw tail =======
             with st.expander("Raw tail (last 200 rows)"):
