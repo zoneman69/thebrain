@@ -3,7 +3,8 @@ import json
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Dict, Optional, List, Iterable
+from pathlib import Path
+from typing import Dict, Optional, List, Iterable, Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -270,6 +271,109 @@ class Hippocampus(nn.Module):
             self.affect_linear = None
         self.pending: Dict[int, PendingWindow] = {}
         self.to(self.mem.device)
+
+    # -- Public API -----------------------------------------------------
+
+    def encode(
+        self,
+        modality: str,
+        features: torch.Tensor,
+        *,
+        t: float,
+        context: Optional[str] = None,
+        affect: Optional[torch.Tensor] = None,
+        prediction: Optional[torch.Tensor] = None,
+    ) -> Dict[str, Any]:
+        """Encode a single event into episodic memory.
+
+        This is the preferred way to write into the hippocampus; it wraps
+        ``forward`` with ``mode="encode"`` and returns the full response
+        dictionary (including novelty statistics).
+        """
+
+        event = Event(
+            modality=modality,
+            features=features,
+            t=t,
+            prediction=prediction,
+            context=context,
+            affect=affect,
+        )
+        return self.forward(event, mode="encode")
+
+    def recall(
+        self,
+        modality: str,
+        cue: torch.Tensor,
+        *,
+        t: float,
+        prediction: Optional[torch.Tensor] = None,
+        topk: Optional[int] = None,
+        decode_modalities: Optional[Iterable[str]] = None,
+    ) -> Dict[str, Any]:
+        """Retrieve the closest fused representation for a cue.
+
+        The recall path supports an optional ``topk`` override as well as
+        ``decode_modalities`` to immediately project the fused vector back into
+        requested sensory spaces.
+        """
+
+        prev_topk = self.read_topk
+        if topk is not None:
+            self.read_topk = topk
+        event = Event(modality=modality, features=cue, t=t, prediction=prediction)
+        result = self.forward(event, mode="retrieve")
+        if topk is not None:
+            self.read_topk = prev_topk
+        fused = result.get("output")
+        if decode_modalities and fused is not None:
+            result["decoded"] = self.decode(fused, decode_modalities)
+        return result
+
+    def export(
+        self,
+        path: Optional[str] = None,
+        *,
+        include_metadata: bool = True,
+        format: str = "pt",
+    ) -> List[Dict[str, Any]]:
+        """Export fused memory traces and targets for cloud training.
+
+        Each record follows the ``{"fused": tensor, "targets": {mod: tensor}}``
+        contract expected by :mod:`scripts.train_cloud`. Metadata collected at
+        write time (contexts, timestamps, raw inputs) is included by default to
+        make downstream debugging easier.
+        """
+
+        records: List[Dict[str, Any]] = []
+        for fused, meta in zip(self.mem.V.detach().cpu(), self.mem.metadata):
+            targets = meta.get("targets", {}) if isinstance(meta, dict) else {}
+            record: Dict[str, Any] = {
+                "fused": fused.clone(),
+                "targets": {k: v.clone() for k, v in targets.items()},
+            }
+            if include_metadata:
+                record["metadata"] = {k: v for k, v in meta.items() if k != "targets"}
+            records.append(record)
+
+        if path is not None:
+            p = Path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if format.lower() == "pt":
+                torch.save(records, p)
+            elif format.lower() == "jsonl":
+                with p.open("w", encoding="utf-8") as handle:
+                    for record in records:
+                        serializable = {
+                            "fused": record["fused"].tolist(),
+                            "targets": {k: v.tolist() for k, v in record["targets"].items()},
+                        }
+                        if include_metadata and "metadata" in record:
+                            serializable["metadata"] = record["metadata"]
+                        handle.write(json.dumps(serializable) + "\n")
+            else:
+                raise ValueError("format must be 'pt' or 'jsonl'")
+        return records
 
     def decode(self, fused: torch.Tensor, target_modalities: Optional[Iterable[str]] = None) -> Dict[str, torch.Tensor]:
         """Decode a fused hippocampal representation back into requested modalities."""

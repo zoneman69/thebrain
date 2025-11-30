@@ -13,6 +13,8 @@ DEMO_MAP = {
     "multimodal": "examples.demo_multimodal:main",
     "multimodal_fused": "examples.demo_multimodal_fused:main",
     "viz_attention": "examples.viz_attention:main",
+    "language_granite": "examples.demo_language_granite:main",
+    "agent": "examples.demo_agent:main",
     "bench_recall": "examples.bench_recall:run",
 }
 

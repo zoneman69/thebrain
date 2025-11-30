@@ -150,3 +150,17 @@ def test_affect_strength_biases_replay():
         idx = replay["indices"][0]
         hits[idx] += 1
     assert int(torch.argmax(hits)) == int(torch.argmax(strengths))
+
+
+def test_public_api_wrappers_produce_replay_records():
+    torch.manual_seed(7)
+    hip = Hippocampus({"language": 16}, shared_dim=24, capacity=8, sparsity=0.1)
+    vec = torch.randn(16)
+    hip.encode("language", vec, t=0.0)
+    hip.flush_pending()
+    res = hip.recall("language", vec * 0.9, t=0.5, decode_modalities=["language"], topk=2)
+    assert res["mode"] == "retrieve"
+    assert "decoded" in res
+    records = hip.export(include_metadata=False)
+    assert len(records) == 1
+    assert set(records[0].keys()) == {"fused", "targets"}
