@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -14,6 +15,10 @@ class CameraSensor:
         self.camera_index = camera_index
         self._capture: Any | None = None
 
+    @staticmethod
+    def _available_camera_devices() -> list[str]:
+        return sorted(glob.glob("/dev/video*"))
+
     def _get_capture(self):
         if self._capture is None:
             try:
@@ -27,10 +32,17 @@ class CameraSensor:
                 # Reset cached capture so we can retry if the configuration changes
                 self._capture.release()
                 self._capture = None
+                devices = self._available_camera_devices()
+                device_hint = (
+                    f"Available video devices: {', '.join(devices)}."
+                    if devices
+                    else "No /dev/video* devices were detected."
+                )
                 raise RuntimeError(
                     "Unable to open camera index "
                     f"{self.camera_index}. Ensure the camera is connected or set "
-                    "PI_CAMERA_INDEX to the correct device."
+                    "PI_CAMERA_INDEX to the correct device. "
+                    + device_hint
                 )
         return self._capture
 

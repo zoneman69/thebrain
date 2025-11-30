@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
+import sys
 
 from agents.pi_daemon import (
     Episode,
@@ -36,6 +38,38 @@ def test_config_allows_camera_device_path(monkeypatch):
     monkeypatch.setenv("PI_CAMERA_INDEX", "/dev/video2")
     cfg = load_config()
     assert cfg.camera_index == "/dev/video2"
+
+
+def test_camera_sensor_reports_available_devices(monkeypatch):
+    from agents.pi_daemon.sensors import CameraSensor
+
+    class DummyCapture:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def isOpened(self):
+            return False
+
+        def release(self):
+            pass
+
+    class DummyCV2Module:
+        VideoCapture = DummyCapture
+
+    monkeypatch.setitem(
+        sys.modules,
+        "cv2",
+        DummyCV2Module(),
+    )
+    monkeypatch.setattr(
+        "agents.pi_daemon.sensors.glob.glob", lambda pattern: ["/dev/video1", "/dev/video3"]
+    )
+
+    cam = CameraSensor(camera_index=99)
+    with pytest.raises(RuntimeError) as excinfo:
+        cam.capture_frame()
+
+    assert "Available video devices: /dev/video1, /dev/video3." in str(excinfo.value)
 
 
 def test_replay_writer_creates_files(tmp_path: Path):
