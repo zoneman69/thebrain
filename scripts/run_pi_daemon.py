@@ -13,6 +13,8 @@ def main() -> None:
         run_daemon()
     except KeyboardInterrupt:
         logger.info("Pi daemon interrupted, exiting")
+    except RuntimeError as exc:
+        logger.error("Pi daemon failed: %s", exc)
 
 
 if __name__ == "__main__":

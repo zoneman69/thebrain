@@ -24,7 +24,14 @@ class CameraSensor:
                 ) from exc
             self._capture = cv2.VideoCapture(self.camera_index)
             if not self._capture.isOpened():  # pragma: no cover - hardware dependent
-                raise RuntimeError(f"Unable to open camera index {self.camera_index}")
+                # Reset cached capture so we can retry if the configuration changes
+                self._capture.release()
+                self._capture = None
+                raise RuntimeError(
+                    "Unable to open camera index "
+                    f"{self.camera_index}. Ensure the camera is connected or set "
+                    "PI_CAMERA_INDEX to the correct device."
+                )
         return self._capture
 
     def capture_frame(self) -> np.ndarray:
