@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class CameraSensor:
-    def __init__(self, camera_index: int = 0):
+    def __init__(self, camera_index: int | str = 0):
         self.camera_index = camera_index
         self._capture: Any | None = None
 

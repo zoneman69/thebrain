@@ -10,6 +10,7 @@ from agents.pi_daemon import (
     build_default_audio_encoder,
     build_default_vision_encoder,
     episode_to_replay,
+    load_config,
 )
 from agents.pi_daemon.daemon import run_daemon
 from agents.pi_daemon.sensors import MockSensorPair
@@ -29,6 +30,12 @@ def test_episode_to_replay_shapes():
     record = episode_to_replay(episode)
     assert record.fused.shape == (256,)
     assert record.fused.dtype == np.float32
+
+
+def test_config_allows_camera_device_path(monkeypatch):
+    monkeypatch.setenv("PI_CAMERA_INDEX", "/dev/video2")
+    cfg = load_config()
+    assert cfg.camera_index == "/dev/video2"
 
 
 def test_replay_writer_creates_files(tmp_path: Path):

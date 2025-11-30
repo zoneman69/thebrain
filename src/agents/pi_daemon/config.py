@@ -7,7 +7,7 @@ from dataclasses import dataclass
 @dataclass
 class PiDaemonConfig:
     sample_interval_seconds: float = 2.0
-    camera_index: int = 0
+    camera_index: int | str = 0
     audio_device: str | int | None = None
     replay_dir: str = "/var/lib/thebrain/replay"
     episode_batch_size: int = 256
@@ -30,6 +30,13 @@ def _parse_env_value(key: str, default: object) -> object:
         return default
     if isinstance(default, bool):
         return value.lower() in {"1", "true", "yes", "on"}
+    if key == "camera_index":
+        # Allow either a numeric index (e.g. 0, 1) or a device path such as
+        # "/dev/video2" for USB webcams that do not map to the default index.
+        try:
+            return int(value)
+        except ValueError:
+            return value
     if isinstance(default, int):
         try:
             return int(value)
