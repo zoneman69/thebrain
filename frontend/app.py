@@ -27,6 +27,8 @@ with col1:
     spec_path  = st.text_input("Spectrogram path", SPEC_PATH)
     ctrl_path  = st.text_input("Control file", CTRL_PATH)
     book_dir   = st.text_input("Bookmarks dir", BOOK_DIR)
+    auto_refresh = st.toggle("Auto-refresh", value=True, help="Pause to inspect a single frame/telemetry snapshot.")
+    manual_refresh = st.button("🔄 Refresh now", help="Render once when auto-refresh is paused.")
     refresh    = st.slider("Auto-refresh (sec)", 1, 10, 2)
     max_lines  = st.number_input("Max lines to load", min_value=100, max_value=200000, value=10000, step=500)
 
@@ -146,7 +148,22 @@ while True:
 
     with container:
         if df.empty:
-            st.info("No telemetry yet. Run a demo (e.g., multimodal_feed) that calls telemetry.log_event(...).")
+            st.info(
+                f"""
+                No telemetry yet. To get started:
+                • Run a producer (e.g., `multimodal_feed`) that calls `telemetry.log_event(...)`.
+                • Verify the expected files are being written:
+                  - Log: `{log_path}`
+                  - Frame: `{frame_path}`
+                  - Spectrogram: `{spec_path}`
+                  - Control out: `{ctrl_path}`
+                  - Bookmarks dir: `{book_dir}`
+                • Checklist for producers:
+                  - emit `mode` + `event_modality`
+                  - include `ts`/`t` timestamps
+                  - optional KPIs: `memory_size`, `pending_windows`, novelty/EMA signals
+                """
+            )
         else:
             # ======= Live camera & audio spectrogram + KPIs =======
             top = st.columns([2, 1])
@@ -284,5 +301,11 @@ while True:
             with st.expander("Raw tail (last 200 rows)"):
                 st.dataframe(df.tail(200), width='stretch')
 
-    time.sleep(refresh)
-    container.empty()
+    if auto_refresh:
+        time.sleep(refresh)
+        container.empty()
+    else:
+        if manual_refresh:
+            container.empty()
+        else:
+            st.stop()
