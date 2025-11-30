@@ -130,6 +130,12 @@ def load_df(path: str, n: int) -> pd.DataFrame:
         df = df.sort_values("time")
     return df
 
+def latest(df: pd.DataFrame, col: str):
+    if col not in df:
+        return np.nan
+    series = pd.Series(df[col]).dropna()
+    return series.iloc[-1] if not series.empty else np.nan
+
 # ------------------ Main render loop ------------------
 placeholder = st.empty()
 
@@ -162,8 +168,10 @@ while True:
             # KPIs on the right
             writes     = (df["mode"] == "encode").sum() if "mode" in df else 0
             retrieves  = (df["mode"] == "retrieve").sum() if "mode" in df else 0
-            mem_size   = int(df.get("memory_size", pd.Series([np.nan])).dropna().iloc[-1]) if "memory_size" in df else np.nan
-            pending    = int(df.get("pending_windows", pd.Series([np.nan])).dropna().iloc[-1]) if "pending_windows" in df else np.nan
+            mem_val    = latest(df, "memory_size")
+            mem_size   = int(mem_val) if not np.isnan(mem_val) else np.nan
+            pending_val = latest(df, "pending_windows")
+            pending    = int(pending_val) if not np.isnan(pending_val) else np.nan
 
             with top[1]:
                 k1, k2, k3, k4 = st.columns(4)
