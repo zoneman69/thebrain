@@ -13,6 +13,7 @@ from typing import Dict, Iterable, Iterator, Tuple
 import torch
 
 from hippocampus import Event
+from hippocampus.artifacts import export_decoder_artifacts
 from hippocampus.cli import instantiate_hippocampus, load_config
 
 logger = logging.getLogger("train_cloud")
@@ -158,30 +159,10 @@ def train_decoders(args: argparse.Namespace) -> Dict[str, int]:
         )
 
     output_dir = Path(args.output_dir)
-    decoder_dir = output_dir / "decoders"
-    decoder_dir.mkdir(parents=True, exist_ok=True)
-    torch.save(hip.window_fusion.state_dict(), output_dir / "window_fusion.pt")
-    torch.save(hip.fusion_gate.state_dict(), output_dir / "fusion_gate.pt")
-    torch.save(hip.mix.state_dict(), output_dir / "mix.pt")
-    torch.save(hip.time_mixer.state_dict(), output_dir / "time_mixer.pt")
-    for name, decoder in hip.decoders.decoders.items():
-        torch.save(decoder.state_dict(), decoder_dir / f"{name}.pt")
-    manifest = {
-        "samples": sample_count,
-        "shared_dim": hip.decoders.shared_dim,
-        "modalities": sorted(hip.decoders.decoders.keys()),
-        "artifacts": [
-            "window_fusion.pt",
-            "fusion_gate.pt",
-            "mix.pt",
-            "time_mixer.pt",
-        ],
-        "source_logs": str(Path(args.log_dir).resolve()) if args.log_dir else "synthetic",
-    }
-    with (output_dir / "manifest.json").open("w", encoding="utf-8") as handle:
-        json.dump(manifest, handle, indent=2)
+    source = str(Path(args.log_dir).resolve()) if args.log_dir else "synthetic"
+    manifest = export_decoder_artifacts(hip, output_dir, samples=sample_count, source=source)
     logger.info("Exported %d samples to %s", sample_count, output_dir)
-    return manifest
+    return manifest.to_dict()
 
 
 def main() -> None:
