@@ -34,50 +34,79 @@ with col1:
 
     st.divider()
 
-    # Language input → feed / retrieve
-    lang_text = st.text_input("Language input", "")
-    c_lang1, c_lang2 = st.columns(2)
-    with c_lang1:
-        if st.button("📨 Send text (encode)"):
-            Path(ctrl_path).write_text(json.dumps({"type": "language", "text": lang_text}))
-            st.toast("Sent language event", icon="📨")
-    with c_lang2:
-        if st.button("🔎 Retrieve with text cue"):
-            Path(ctrl_path).write_text(json.dumps({"type": "retrieve_with_text", "text": lang_text}))
-            st.toast("Retrieving with text cue…", icon="🔎")
+    with st.expander("Language encode/retrieve", expanded=True):
+        lang_text = st.text_input(
+            "Language input",
+            "",
+            help="Text payload written to HIPPO_CTRL for language encode/retrieve commands; consumed by the Hippo loop on its next control-file poll.",
+        )
+        c_lang1, c_lang2 = st.columns(2)
+        with c_lang1:
+            if st.button(
+                "📨 Send text (encode)",
+                help="Writes {'type': 'language', 'text': <Language input>} to HIPPO_CTRL; processed on the next backend cycle.",
+            ):
+                Path(ctrl_path).write_text(json.dumps({"type": "language", "text": lang_text}))
+                st.toast("Sent language event", icon="📨")
+        with c_lang2:
+            if st.button(
+                "🔎 Retrieve with text cue",
+                help="Writes {'type': 'retrieve_with_text', 'text': <Language input>} to HIPPO_CTRL; retrieval starts when the control file is read next.",
+            ):
+                Path(ctrl_path).write_text(json.dumps({"type": "retrieve_with_text", "text": lang_text}))
+                st.toast("Retrieving with text cue…", icon="🔎")
 
-    st.divider()
+    with st.expander("Snapshot management", expanded=True):
+        snap_dir = Path("/tmp/hippo_snaps"); snap_dir.mkdir(exist_ok=True)
+        snap_path = snap_dir / f"snap_{int(time.time())}.pt"
+        if st.button(
+            "💾 Save snapshot",
+            help="Writes {'type': 'save_snapshot', 'path': <auto-named .pt file>} to HIPPO_CTRL; handled on the next control-file read to persist state.",
+        ):
+            Path(ctrl_path).write_text(json.dumps({"type": "save_snapshot", "path": str(snap_path)}))
+            st.toast(f"Saving to {snap_path}", icon="💾")
 
-    # Snapshots save/load
-    snap_dir = Path("/tmp/hippo_snaps"); snap_dir.mkdir(exist_ok=True)
-    snap_path = snap_dir / f"snap_{int(time.time())}.pt"
-    if st.button("💾 Save snapshot"):
-        Path(ctrl_path).write_text(json.dumps({"type": "save_snapshot", "path": str(snap_path)}))
-        st.toast(f"Saving to {snap_path}", icon="💾")
+        load_in = st.text_input(
+            "Load snapshot path",
+            "",
+            help="Path used when writing {'type': 'load_snapshot', 'path': <value>} to HIPPO_CTRL; load occurs when the backend polls the control file next.",
+        )
+        if st.button(
+            "📂 Load snapshot",
+            help="Writes {'type': 'load_snapshot', 'path': <Load snapshot path>} to HIPPO_CTRL; snapshot is restored on the next backend cycle.",
+        ) and load_in:
+            Path(ctrl_path).write_text(json.dumps({"type": "load_snapshot", "path": load_in}))
+            st.toast(f"Loading {load_in}", icon="📂")
 
-    load_in = st.text_input("Load snapshot path", "")
-    if st.button("📂 Load snapshot") and load_in:
-        Path(ctrl_path).write_text(json.dumps({"type": "load_snapshot", "path": load_in}))
-        st.toast(f"Loading {load_in}", icon="📂")
+    with st.expander("Memory actions", expanded=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button(
+                "🔎 Retrieve now",
+                help="Writes {'type': 'retrieve_now'} to HIPPO_CTRL; retrieval runs as soon as the next control poll occurs.",
+            ):
+                Path(ctrl_path).write_text(json.dumps({"type": "retrieve_now"}))
+                st.toast("Sent: retrieve_now", icon="🔎")
+        with c2:
+            label_val = st.text_input(
+                "Bookmark label",
+                "",
+                help="Optional label stored when writing {'type': 'bookmark', 'label': <Bookmark label>} to HIPPO_CTRL on the next bookmark request.",
+            )
+            if st.button(
+                "🔖 Bookmark frame",
+                help="Writes {'type': 'bookmark', 'label': <Bookmark label>} to HIPPO_CTRL; the producer bookmarks the latest frame on the following loop.",
+            ):
+                Path(ctrl_path).write_text(json.dumps({"type": "bookmark", "label": label_val}))
+                st.toast("Sent: bookmark", icon="📌")
 
-    st.divider()
-
-    # On-demand actions: write commands to CTRL_PATH
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🔎 Retrieve now"):
-            Path(ctrl_path).write_text(json.dumps({"type": "retrieve_now"}))
-            st.toast("Sent: retrieve_now", icon="🔎")
-    with c2:
-        label_val = st.text_input("Bookmark label", "")
-        if st.button("🔖 Bookmark frame"):
-            Path(ctrl_path).write_text(json.dumps({"type": "bookmark", "label": label_val}))
-            st.toast("Sent: bookmark", icon="📌")
-
-    cool = st.slider("Encode cooldown (s)", 0.0, 3.0, 1.0, 0.1)
-    if st.button("💾 Set cooldown"):
-        Path(ctrl_path).write_text(json.dumps({"type": "set_cooldown", "seconds": float(cool)}))
-        st.toast(f"Set cooldown → {cool:.1f}s", icon="💾")
+        cool = st.slider("Encode cooldown (s)", 0.0, 3.0, 1.0, 0.1)
+        if st.button(
+            "💾 Set cooldown",
+            help="Writes {'type': 'set_cooldown', 'seconds': <Encode cooldown>} to HIPPO_CTRL; applied the next time the control file is read.",
+        ):
+            Path(ctrl_path).write_text(json.dumps({"type": "set_cooldown", "seconds": float(cool)}))
+            st.toast(f"Set cooldown → {cool:.1f}s", icon="💾")
 
 # ------------------ Helpers ------------------
 @st.cache_data(show_spinner=False)
