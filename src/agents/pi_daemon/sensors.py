@@ -19,6 +19,14 @@ class CameraSensor:
     def _available_camera_devices() -> list[str]:
         return sorted(glob.glob("/dev/video*"))
 
+    @staticmethod
+    def _open_capture(cv2: Any, index: int | str):
+        capture = cv2.VideoCapture(index)
+        if capture.isOpened():
+            return capture
+        capture.release()
+        return None
+
     def _get_capture(self):
         if self._capture is None:
             try:
@@ -27,23 +35,34 @@ class CameraSensor:
                 raise RuntimeError(
                     "OpenCV (cv2) is required for camera capture but is not installed."
                 ) from exc
-            self._capture = cv2.VideoCapture(self.camera_index)
-            if not self._capture.isOpened():  # pragma: no cover - hardware dependent
-                # Reset cached capture so we can retry if the configuration changes
-                self._capture.release()
-                self._capture = None
+            self._capture = self._open_capture(cv2, self.camera_index)
+            if self._capture is None:  # pragma: no cover - hardware dependent
                 devices = self._available_camera_devices()
-                device_hint = (
-                    f"Available video devices: {', '.join(devices)}."
-                    if devices
-                    else "No /dev/video* devices were detected."
-                )
-                raise RuntimeError(
-                    "Unable to open camera index "
-                    f"{self.camera_index}. Ensure the camera is connected or set "
-                    "PI_CAMERA_INDEX to the correct device. "
-                    + device_hint
-                )
+                for device in devices:
+                    if device == self.camera_index:
+                        continue
+                    self._capture = self._open_capture(cv2, device)
+                    if self._capture is not None:
+                        logger.warning(
+                            "Unable to open camera %s; falling back to %s",
+                            self.camera_index,
+                            device,
+                        )
+                        self.camera_index = device
+                        break
+
+                if self._capture is None:
+                    device_hint = (
+                        f"Available video devices: {', '.join(devices)}."
+                        if devices
+                        else "No /dev/video* devices were detected."
+                    )
+                    raise RuntimeError(
+                        "Unable to open camera index "
+                        f"{self.camera_index}. Ensure the camera is connected or set "
+                        "PI_CAMERA_INDEX to the correct device. "
+                        + device_hint
+                    )
         return self._capture
 
     def capture_frame(self) -> np.ndarray:
