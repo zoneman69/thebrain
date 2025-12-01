@@ -30,6 +30,8 @@ def run_daemon(iterations: int | None = None) -> None:
             retry_attempts=cfg.camera_retry_attempts,
             retry_delay_seconds=cfg.camera_retry_delay_seconds,
         )
+        logger.info("Using direct camera source at index %s", cfg.camera_index)
+
     mic = MicrophoneSensor(cfg.audio_device)
     vision_enc = build_default_vision_encoder()
     audio_enc = build_default_audio_encoder()
@@ -39,6 +41,7 @@ def run_daemon(iterations: int | None = None) -> None:
         count = 0
         while True:
             t0 = time.time()
+
             frame = cam.capture_frame()
             waveform = mic.capture_window(duration_seconds=1.0)
 
@@ -47,7 +50,10 @@ def run_daemon(iterations: int | None = None) -> None:
 
             episode = Episode(
                 inputs={"vision": vision_vec, "auditory": audio_vec},
-                metadata={"timestamp": datetime.now(timezone.utc).isoformat(), "source": "pi"},
+                metadata={
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "source": "pi",
+                },
             )
             replay_record = episode_to_replay(episode)
             writer.append(replay_record)
@@ -64,4 +70,5 @@ def run_daemon(iterations: int | None = None) -> None:
                 break
     finally:
         writer.flush()
+        # Both CameraSensor and FrameFileSensor now implement close()
         cam.close()
