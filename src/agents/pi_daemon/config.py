@@ -8,6 +8,8 @@ from dataclasses import dataclass
 class PiDaemonConfig:
     sample_interval_seconds: float = 2.0
     camera_index: int | str = 0
+    camera_retry_attempts: int = 3
+    camera_retry_delay_seconds: float = 2.0
     audio_device: str | int | None = None
     replay_dir: str = "/var/lib/thebrain/replay"
     episode_batch_size: int = 256
@@ -17,6 +19,8 @@ class PiDaemonConfig:
 _ENV_KEYS = {
     "sample_interval_seconds": "PI_SAMPLE_INTERVAL_SECONDS",
     "camera_index": "PI_CAMERA_INDEX",
+    "camera_retry_attempts": "PI_CAMERA_RETRY_ATTEMPTS",
+    "camera_retry_delay_seconds": "PI_CAMERA_RETRY_DELAY_SECONDS",
     "audio_device": "PI_AUDIO_DEVICE",
     "replay_dir": "PI_REPLAY_DIR",
     "episode_batch_size": "PI_EPISODE_BATCH_SIZE",

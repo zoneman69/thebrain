@@ -65,7 +65,7 @@ def test_camera_sensor_reports_available_devices(monkeypatch):
         "agents.pi_daemon.sensors.glob.glob", lambda pattern: ["/dev/video1", "/dev/video3"]
     )
 
-    cam = CameraSensor(camera_index=99)
+    cam = CameraSensor(camera_index=99, retry_attempts=1, retry_delay_seconds=0)
     with pytest.raises(RuntimeError) as excinfo:
         cam.capture_frame()
 

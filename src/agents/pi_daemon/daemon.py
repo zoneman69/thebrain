@@ -16,7 +16,11 @@ def run_daemon(iterations: int | None = None) -> None:
     cfg = load_config()
     logger.info("Starting Pi daemon with replay_dir=%s", cfg.replay_dir)
 
-    cam = CameraSensor(cfg.camera_index)
+    cam = CameraSensor(
+        camera_index=cfg.camera_index,
+        retry_attempts=cfg.camera_retry_attempts,
+        retry_delay_seconds=cfg.camera_retry_delay_seconds,
+    )
     mic = MicrophoneSensor(cfg.audio_device)
     vision_enc = build_default_vision_encoder()
     audio_enc = build_default_audio_encoder()
