@@ -8,6 +8,7 @@ from dataclasses import dataclass
 class PiDaemonConfig:
     sample_interval_seconds: float = 2.0
     frame_path: str | None = None
+    spec_path: str | None = None          # NEW: spectrogram file path
     camera_index: int | str = 0
     camera_retry_attempts: int = 3
     camera_retry_delay_seconds: float = 2.0
@@ -20,6 +21,7 @@ class PiDaemonConfig:
 _ENV_KEYS = {
     "sample_interval_seconds": "PI_SAMPLE_INTERVAL_SECONDS",
     "frame_path": "PI_FRAME_PATH",
+    "spec_path": "PI_SPEC_PATH",          # NEW
     "camera_index": "PI_CAMERA_INDEX",
     "camera_retry_attempts": "PI_CAMERA_RETRY_ATTEMPTS",
     "camera_retry_delay_seconds": "PI_CAMERA_RETRY_DELAY_SECONDS",
@@ -33,11 +35,13 @@ _ENV_KEYS = {
 def _parse_env_value(key: str, default: object) -> object:
     value = os.getenv(_ENV_KEYS[key])
     if value is None:
-        # Allow the daemon to piggy-back on the feed/UI frame file without
-        # additional configuration. HIPPO_FRAME is set in the systemd units and
-        # defaults to /tmp/hippo_latest.jpg.
+        # Allow the daemon to piggy-back on the feed/UI frame & spec files
+        # without extra config. HIPPO_FRAME/HIPPO_SPEC are set in systemd
+        # units and default to /tmp/hippo_latest.jpg / /tmp/hippo_spec.png.
         if key == "frame_path":
             value = os.getenv("HIPPO_FRAME")
+        elif key == "spec_path":
+            value = os.getenv("HIPPO_SPEC")
         else:
             value = None
     if value is None:
