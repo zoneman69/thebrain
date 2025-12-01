@@ -15,6 +15,11 @@ class CameraSensor:
         self.camera_index = camera_index
         self._capture: Any | None = None
 
+    def close(self) -> None:
+        if self._capture is not None:  # pragma: no cover - hardware dependent
+            self._capture.release()
+            self._capture = None
+
     @staticmethod
     def _available_camera_devices() -> list[str]:
         return sorted(glob.glob("/dev/video*"))
@@ -69,7 +74,14 @@ class CameraSensor:
         capture = self._get_capture()
         ret, frame = capture.read()
         if not ret:  # pragma: no cover - hardware dependent
-            raise RuntimeError("Failed to read frame from camera")
+            logger.warning(
+                "Failed to read frame from camera %s; attempting to reinitialize", self.camera_index
+            )
+            self.close()
+            capture = self._get_capture()
+            ret, frame = capture.read()
+            if not ret:
+                raise RuntimeError("Failed to read frame from camera after reinitialization")
         try:
             import cv2
         except ImportError:  # pragma: no cover - optional dependency
