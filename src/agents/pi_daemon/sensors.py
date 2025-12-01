@@ -119,11 +119,18 @@ class FrameFileSensor:
         self.retry_attempts = max(1, int(retry_attempts))
         self.retry_delay_seconds = max(0.0, float(retry_delay_seconds))
 
+    def close(self) -> None:
+        # No resources to free, but we keep this method for API compatibility
+        # with CameraSensor so callers can always call cam.close().
+        return None
+
     def capture_frame(self) -> np.ndarray:
         try:
             import cv2
         except ImportError as exc:  # pragma: no cover - requires optional dependency
-            raise RuntimeError("OpenCV (cv2) is required for frame decoding but is not installed.") from exc
+            raise RuntimeError(
+                "OpenCV (cv2) is required for frame decoding but is not installed."
+            ) from exc
 
         attempts_remaining = self.retry_attempts
         while attempts_remaining >= 0:  # pragma: no cover - hardware/filesystem dependent
