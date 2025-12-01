@@ -10,7 +10,12 @@ import numpy as np
 from .config import load_config
 from .encoders import build_default_audio_encoder, build_default_vision_encoder
 from .episodes import Episode, ReplayWriter, episode_to_replay
-from .sensors import CameraSensor, FrameFileSensor, MicrophoneSensor
+from .sensors import (
+    CameraSensor,
+    FrameFileSensor,
+    MicrophoneSensor,
+    SpectrogramFileSensor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +24,7 @@ def run_daemon(iterations: int | None = None) -> None:
     cfg = load_config()
     logger.info("Starting Pi daemon with replay_dir=%s", cfg.replay_dir)
 
-    # Vision source: either shared frame file (from thebrain-feed) or direct camera
+    # --- vision source: shared frame file or direct camera ---
     if cfg.frame_path:
         cam = FrameFileSensor(
             frame_path=Path(cfg.frame_path),
@@ -35,13 +40,24 @@ def run_daemon(iterations: int | None = None) -> None:
         )
         logger.info("Using direct camera source at index %s", cfg.camera_index)
 
-    mic = MicrophoneSensor(cfg.audio_device)
+    # --- audio source: shared spectrogram file OR microphone ---
+    spec_sensor: SpectrogramFileSensor | None = None
+    mic: MicrophoneSensor | None = None
+    audio_enabled = True
+
+    if cfg.spec_path:
+        spec_sensor = SpectrogramFileSensor(
+            spec_path=Path(cfg.spec_path),
+            retry_attempts=cfg.camera_retry_attempts,
+            retry_delay_seconds=cfg.camera_retry_delay_seconds,
+        )
+        logger.info("Using spectrogram file source at %s", cfg.spec_path)
+    else:
+        mic = MicrophoneSensor(cfg.audio_device)
+
     vision_enc = build_default_vision_encoder()
     audio_enc = build_default_audio_encoder()
     writer = ReplayWriter(cfg.replay_dir, cfg.episode_batch_size, cfg.max_replay_files)
-
-    # If audio fails once (no device, misconfig, etc.), we switch to silence
-    audio_enabled = True
 
     try:
         count = 0
@@ -51,30 +67,38 @@ def run_daemon(iterations: int | None = None) -> None:
             # --- vision ---
             frame = cam.capture_frame()
 
-            # --- audio (with graceful fallback) ---
-            if audio_enabled:
-                try:
-                    waveform = mic.capture_window(duration_seconds=1.0)
-                except Exception as exc:
-                    logger.warning(
-                        "Microphone capture failed (%s); disabling audio and using silence instead.",
-                        exc,
-                    )
-                    audio_enabled = False
-                    # 1 second of silence at the mic's sample rate (or 16 kHz default)
-                    sr = getattr(mic, "sample_rate", 16000)
-                    waveform = np.zeros(int(sr * 1.0), dtype=np.float32)
+            # --- audio ---
+            if spec_sensor is not None:
+                # Read spectrogram image (e.g., HIPPO_SPEC) and treat it as mel-like
+                mel_like = spec_sensor.capture_spectrogram()  # 2D float32
+                audio_vec = audio_enc.encode_mel(mel_like)
             else:
-                # Already disabled: just use silence
-                sr = getattr(mic, "sample_rate", 16000)
-                waveform = np.zeros(int(sr * 1.0), dtype=np.float32)
+                # Microphone path with graceful fallback to silence
+                if audio_enabled and mic is not None:
+                    try:
+                        waveform = mic.capture_window(duration_seconds=1.0)
+                    except Exception as exc:
+                        logger.warning(
+                            "Microphone capture failed (%s); disabling audio and using silence instead.",
+                            exc,
+                        )
+                        audio_enabled = False
+                        sr = getattr(mic, "sample_rate", 16000)
+                        waveform = np.zeros(int(sr * 1.0), dtype=np.float32)
+                    else:
+                        sr = mic.sample_rate
+                else:
+                    # Already disabled or no mic configured: use silence
+                    sr = getattr(mic, "sample_rate", 16000) if mic is not None else 16000
+                    waveform = np.zeros(int(sr * 1.0), dtype=np.float32)
 
-            # --- encode multimodal inputs ---
-            vision_vec = vision_enc.encode_frame(frame)
-            audio_vec = audio_enc.encode_waveform(waveform, sample_rate=mic.sample_rate)
+                audio_vec = audio_enc.encode_waveform(waveform, sample_rate=sr)
 
+            # --- build episode & write replay ---
             episode = Episode(
-                inputs={"vision": vision_vec, "auditory": audio_vec},
+                inputs={"vision": vision_vec, "auditory": audio_vec}
+                if (vision_vec := vision_enc.encode_frame(frame)) is not None
+                else {"vision": vision_enc.encode_frame(frame), "auditory": audio_vec},
                 metadata={
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "source": "pi",
@@ -96,3 +120,5 @@ def run_daemon(iterations: int | None = None) -> None:
     finally:
         writer.flush()
         cam.close()
+        if spec_sensor is not None:
+            spec_sensor.close()
