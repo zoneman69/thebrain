@@ -109,7 +109,6 @@ with col1:
             st.toast(f"Set cooldown → {cool:.1f}s", icon="💾")
 
 # ------------------ Helpers ------------------
-@st.cache_data(show_spinner=False)
 def read_tail(path: str, n: int) -> List[str]:
     p = Path(path)
     if not p.exists(): return []
@@ -176,6 +175,17 @@ while True:
     container = placeholder.container()
 
     with container:
+        # ======= Live camera & audio spectrogram =======
+        top = st.columns([2, 1])
+        with top[0]:
+            c_left, c_right = st.columns([1, 1])
+            with c_left:
+                st.subheader("Live camera")
+                show_image_safe(frame_path, "Live frame")
+            with c_right:
+                st.subheader("Audio: Log-spectrogram")
+                show_image_safe(spec_path, "Spectrogram")
+
         if df.empty:
             st.info(
                 f"""
@@ -194,22 +204,7 @@ while True:
                 """
             )
         else:
-            # ======= Live camera & audio spectrogram + KPIs =======
-            top = st.columns([2, 1])
-            with top[0]:
-                c_left, c_right = st.columns([1, 1])
-                with c_left:
-                    st.subheader("Live camera")
-                    if Path(frame_path).exists():
-                        show_image_safe(frame_path, "hippo_latest.jpg")
-                    else:
-                        st.info("Waiting for live frame…")
-                with c_right:
-                    st.subheader("Audio: Log-spectrogram")
-                    if Path(spec_path).exists():
-                        show_image_safe(spec_path, "hippo_spec.png")
-                    else:
-                        st.info("Waiting for spectrogram…")
+            # ======= KPIs =======
 
             # KPIs on the right
             writes     = (df["mode"] == "encode").sum() if "mode" in df else 0
