@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import glob
 import logging
+import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -104,6 +106,45 @@ class CameraSensor:
         if cv2 is not None:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         return frame.astype(np.uint8)
+
+
+class FrameFileSensor:
+    def __init__(
+        self,
+        frame_path: str | os.PathLike[str],
+        retry_attempts: int = 3,
+        retry_delay_seconds: float = 2.0,
+    ):
+        self.frame_path = Path(frame_path)
+        self.retry_attempts = max(1, int(retry_attempts))
+        self.retry_delay_seconds = max(0.0, float(retry_delay_seconds))
+
+    def capture_frame(self) -> np.ndarray:
+        try:
+            import cv2
+        except ImportError as exc:  # pragma: no cover - requires optional dependency
+            raise RuntimeError("OpenCV (cv2) is required for frame decoding but is not installed.") from exc
+
+        attempts_remaining = self.retry_attempts
+        while attempts_remaining >= 0:  # pragma: no cover - hardware/filesystem dependent
+            if not self.frame_path.exists():
+                logger.warning("Frame file %s is missing; waiting for writer", self.frame_path)
+            else:
+                frame = cv2.imread(str(self.frame_path))
+                if frame is not None:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    return frame.astype(np.uint8)
+                logger.warning("Failed to decode frame file %s; retrying", self.frame_path)
+
+            attempts_remaining -= 1
+            if attempts_remaining < 0:
+                break
+            if self.retry_delay_seconds:
+                time.sleep(self.retry_delay_seconds)
+
+        raise RuntimeError(
+            f"Failed to read frame from {self.frame_path}. Ensure the producer is writing a valid image."
+        )
 
 
 class MicrophoneSensor:

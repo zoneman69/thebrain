@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from .config import load_config
 from .encoders import build_default_audio_encoder, build_default_vision_encoder
 from .episodes import Episode, ReplayWriter, episode_to_replay
-from .sensors import CameraSensor, MicrophoneSensor
+from .sensors import CameraSensor, FrameFileSensor, MicrophoneSensor
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +17,19 @@ def run_daemon(iterations: int | None = None) -> None:
     cfg = load_config()
     logger.info("Starting Pi daemon with replay_dir=%s", cfg.replay_dir)
 
-    cam = CameraSensor(
-        camera_index=cfg.camera_index,
-        retry_attempts=cfg.camera_retry_attempts,
-        retry_delay_seconds=cfg.camera_retry_delay_seconds,
-    )
+    if cfg.frame_path:
+        cam = FrameFileSensor(
+            frame_path=Path(cfg.frame_path),
+            retry_attempts=cfg.camera_retry_attempts,
+            retry_delay_seconds=cfg.camera_retry_delay_seconds,
+        )
+        logger.info("Using frame file source at %s", cfg.frame_path)
+    else:
+        cam = CameraSensor(
+            camera_index=cfg.camera_index,
+            retry_attempts=cfg.camera_retry_attempts,
+            retry_delay_seconds=cfg.camera_retry_delay_seconds,
+        )
     mic = MicrophoneSensor(cfg.audio_device)
     vision_enc = build_default_vision_encoder()
     audio_enc = build_default_audio_encoder()

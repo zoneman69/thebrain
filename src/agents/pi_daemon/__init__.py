@@ -9,7 +9,7 @@ from .encoders import (
     build_default_audio_encoder,
     build_default_vision_encoder,
 )
-from .sensors import CameraSensor, MicrophoneSensor
+from .sensors import CameraSensor, FrameFileSensor, MicrophoneSensor
 
 __all__ = [
     "PiDaemonConfig",
@@ -23,6 +23,7 @@ __all__ = [
     "build_default_audio_encoder",
     "build_default_vision_encoder",
     "CameraSensor",
+    "FrameFileSensor",
     "MicrophoneSensor",
     "run_daemon",
 ]
