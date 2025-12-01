@@ -95,11 +95,24 @@ class DefaultAudioEncoder:
             mel = mel[:, : self.n_frames]
         return mel
 
-    def encode_waveform(self, waveform: np.ndarray, sample_rate: int) -> np.ndarray:
-        mel_spec = self._spectrogram(waveform, sample_rate)
-        flat = mel_spec.flatten()
+    def encode_mel(self, mel: np.ndarray) -> np.ndarray:
+        """
+        Encode a mel-like matrix of shape (n_mel_bins, n_frames) into a 256-d vector.
+        Used for both waveform-derived spectrograms and spectrogram images.
+        """
+        mel = mel.astype(np.float32)
+        # Resize to (n_mel_bins, n_frames) by simple subsampling
+        h, w = mel.shape
+        y_idx = np.linspace(0, h - 1, self.n_mel_bins).astype(int)
+        x_idx = np.linspace(0, w - 1, self.n_frames).astype(int)
+        mel_resized = mel[np.ix_(y_idx, x_idx)]
+        flat = mel_resized.flatten()
         flat = (flat - flat.mean()) / (flat.std() + 1e-6)
         return self.projector(flat)
+
+    def encode_waveform(self, waveform: np.ndarray, sample_rate: int) -> np.ndarray:
+        mel_spec = self._spectrogram(waveform, sample_rate)
+        return self.encode_mel(mel_spec)
 
 
 def build_default_vision_encoder() -> VisionEncoder:
