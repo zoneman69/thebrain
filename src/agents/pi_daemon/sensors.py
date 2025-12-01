@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import glob
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,8 +12,15 @@ logger = logging.getLogger(__name__)
 
 
 class CameraSensor:
-    def __init__(self, camera_index: int | str = 0):
+    def __init__(
+        self,
+        camera_index: int | str = 0,
+        retry_attempts: int = 3,
+        retry_delay_seconds: float = 2.0,
+    ):
         self.camera_index = camera_index
+        self.retry_attempts = max(1, int(retry_attempts))
+        self.retry_delay_seconds = max(0.0, float(retry_delay_seconds))
         self._capture: Any | None = None
 
     def close(self) -> None:
@@ -73,15 +81,22 @@ class CameraSensor:
     def capture_frame(self) -> np.ndarray:
         capture = self._get_capture()
         ret, frame = capture.read()
-        if not ret:  # pragma: no cover - hardware dependent
+        attempts_remaining = self.retry_attempts
+        while not ret and attempts_remaining > 0:  # pragma: no cover - hardware dependent
+            attempts_remaining -= 1
             logger.warning(
-                "Failed to read frame from camera %s; attempting to reinitialize", self.camera_index
+                "Failed to read frame from camera %s; attempting to reinitialize (%d retries left)",
+                self.camera_index,
+                attempts_remaining,
             )
             self.close()
+            if self.retry_delay_seconds:
+                time.sleep(self.retry_delay_seconds)
             capture = self._get_capture()
             ret, frame = capture.read()
-            if not ret:
-                raise RuntimeError("Failed to read frame from camera after reinitialization")
+
+        if not ret:
+            raise RuntimeError("Failed to read frame from camera after reinitialization")
         try:
             import cv2
         except ImportError:  # pragma: no cover - optional dependency
@@ -128,6 +143,7 @@ class MockSensorPair:
         class _MockCamera(CameraSensor):
             def __init__(self, frame: np.ndarray):
                 self.frame = frame
+                self._capture = None
 
             def capture_frame(self) -> np.ndarray:
                 return np.array(self.frame, copy=True)
