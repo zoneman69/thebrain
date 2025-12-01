@@ -22,30 +22,33 @@ def run_daemon(iterations: int | None = None) -> None:
     audio_enc = build_default_audio_encoder()
     writer = ReplayWriter(cfg.replay_dir, cfg.episode_batch_size, cfg.max_replay_files)
 
-    count = 0
-    while True:
-        t0 = time.time()
-        frame = cam.capture_frame()
-        waveform = mic.capture_window(duration_seconds=1.0)
+    try:
+        count = 0
+        while True:
+            t0 = time.time()
+            frame = cam.capture_frame()
+            waveform = mic.capture_window(duration_seconds=1.0)
 
-        vision_vec = vision_enc.encode_frame(frame)
-        audio_vec = audio_enc.encode_waveform(waveform, sample_rate=mic.sample_rate)
+            vision_vec = vision_enc.encode_frame(frame)
+            audio_vec = audio_enc.encode_waveform(waveform, sample_rate=mic.sample_rate)
 
-        episode = Episode(
-            inputs={"vision": vision_vec, "auditory": audio_vec},
-            metadata={"timestamp": datetime.now(timezone.utc).isoformat(), "source": "pi"},
-        )
-        replay_record = episode_to_replay(episode)
-        writer.append(replay_record)
+            episode = Episode(
+                inputs={"vision": vision_vec, "auditory": audio_vec},
+                metadata={"timestamp": datetime.now(timezone.utc).isoformat(), "source": "pi"},
+            )
+            replay_record = episode_to_replay(episode)
+            writer.append(replay_record)
 
-        count += 1
-        logger.info("Recorded episode %d", count)
+            count += 1
+            logger.info("Recorded episode %d", count)
 
-        dt = time.time() - t0
-        sleep_time = max(0.0, cfg.sample_interval_seconds - dt)
-        time.sleep(sleep_time)
+            dt = time.time() - t0
+            sleep_time = max(0.0, cfg.sample_interval_seconds - dt)
+            time.sleep(sleep_time)
 
-        if iterations is not None and count >= iterations:
-            logger.info("Reached iteration limit (%d), stopping.", iterations)
-            writer.flush()
-            break
+            if iterations is not None and count >= iterations:
+                logger.info("Reached iteration limit (%d), stopping.", iterations)
+                break
+    finally:
+        writer.flush()
+        cam.close()
