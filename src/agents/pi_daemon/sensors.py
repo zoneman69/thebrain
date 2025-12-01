@@ -154,6 +154,58 @@ class FrameFileSensor:
         )
 
 
+class SpectrogramFileSensor:
+    """
+    Reads a spectrogram image (e.g., HIPPO_SPEC PNG) and returns it as a
+    2D float32 array for audio encoding.
+    """
+
+    def __init__(
+        self,
+        spec_path: str | os.PathLike[str],
+        retry_attempts: int = 3,
+        retry_delay_seconds: float = 2.0,
+    ):
+        self.spec_path = Path(spec_path)
+        self.retry_attempts = max(1, int(retry_attempts))
+        self.retry_delay_seconds = max(0.0, float(retry_delay_seconds))
+
+    def close(self) -> None:
+        # No hardware resources to free, but keep API shape consistent.
+        return None
+
+    def capture_spectrogram(self) -> np.ndarray:
+        try:
+            import cv2
+        except ImportError as exc:  # pragma: no cover - requires optional dependency
+            raise RuntimeError(
+                "OpenCV (cv2) is required for spectrogram decoding but is not installed."
+            ) from exc
+
+        attempts_remaining = self.retry_attempts
+        while attempts_remaining >= 0:  # pragma: no cover - filesystem dependent
+            if not self.spec_path.exists():
+                logger.warning("Spectrogram file %s is missing; waiting for writer", self.spec_path)
+            else:
+                img = cv2.imread(str(self.spec_path), cv2.IMREAD_GRAYSCALE)
+                if img is not None:
+                    return img.astype(np.float32)
+                logger.warning(
+                    "Failed to decode spectrogram file %s; retrying", self.spec_path
+                )
+
+            attempts_remaining -= 1
+            if attempts_remaining < 0:
+                break
+            if self.retry_delay_seconds:
+                time.sleep(self.retry_delay_seconds)
+
+        raise RuntimeError(
+            f"Failed to read spectrogram from {self.spec_path}. "
+            "Ensure the producer is writing a valid spectrogram image."
+        )
+
+
 class MicrophoneSensor:
     def __init__(self, device: str | int | None = None, sample_rate: int = 16000):
         self.device = device
