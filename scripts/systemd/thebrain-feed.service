@@ -1,0 +1,24 @@
+# /etc/systemd/system/thebrain-feed.service
+[Unit]
+Description=TheBrain Multimodal Feed (vision+audio -> hippocampus)
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=image
+WorkingDirectory=/home/image/thebrain
+Environment=HIPPO_LOG=/tmp/hippo.jsonl
+Environment=HIPPO_FRAME=/tmp/hippo_latest.jpg
+Environment=HIPPO_SPEC=/tmp/hippo_spec.png
+Environment=HIPPO_CTRL=/tmp/hippo_cmd.json
+# choose specific device if needed: Environment=HIPPO_AUDIO_DEVICE=USB
+ExecStart=/home/image/thebrain/.venv/bin/python -m examples.multimodal_feed
+Restart=always
+RestartSec=3
+# give mic/cam access and sane priorities
+AmbientCapabilities=CAP_SYS_NICE
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
