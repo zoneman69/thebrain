@@ -33,6 +33,14 @@ _ENV_KEYS = {
 def _parse_env_value(key: str, default: object) -> object:
     value = os.getenv(_ENV_KEYS[key])
     if value is None:
+        # Allow the daemon to piggy-back on the feed/UI frame file without
+        # additional configuration. HIPPO_FRAME is set in the systemd units and
+        # defaults to /tmp/hippo_latest.jpg.
+        if key == "frame_path":
+            value = os.getenv("HIPPO_FRAME")
+        else:
+            value = None
+    if value is None:
         return default
     if isinstance(default, bool):
         return value.lower() in {"1", "true", "yes", "on"}
