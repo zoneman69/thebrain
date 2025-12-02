@@ -21,6 +21,8 @@ class Episode:
 
     inputs: Dict[str, np.ndarray]
     metadata: Dict[str, Any] = field(default_factory=dict)
+# Backwards-compatible alias used in agents.pi_daemon.__init__
+ReplayRecord = Dict[str, Any]
 
 
 def _ensure_vec(x: np.ndarray) -> np.ndarray:
