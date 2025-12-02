@@ -1,23 +1,27 @@
 from __future__ import annotations
-
+import os
 import math
 from typing import Protocol
 
 import numpy as np
 
+FUSED_DIM = int(os.getenv("HIPPO_FUSED_DIM", "192"))
 
 class VisionEncoder(Protocol):
     def encode_frame(self, frame: np.ndarray) -> np.ndarray:
         """Return a 1D float32 array of length 256 (vision embedding)."""
 
 
-class AudioEncoder(Protocol):
-    def encode_waveform(self, waveform: np.ndarray, sample_rate: int) -> np.ndarray:
-        """Return a 1D float32 array of length 256 (auditory embedding)."""
+class DefaultAudioEncoder:
+    def __init__(self, n_mel_bins: int = 64, n_frames: int = 32, seed: int = 1234):
+        self.n_mel_bins = n_mel_bins
+        self.n_frames = n_frames
+        input_dim = n_mel_bins * n_frames
+        self.projector = _RandomProjector(input_dim, FUSED_DIM, seed)
 
 
 class _RandomProjector:
-    def __init__(self, input_dim: int, output_dim: int = 256, seed: int = 42):
+    def __init__(self, input_dim: int, output_dim: int = FUSED_DIM, seed: int = 42):
         rng = np.random.default_rng(seed)
         self.matrix = rng.standard_normal((input_dim, output_dim)).astype(np.float32)
         self.scale = 1.0 / math.sqrt(input_dim)
@@ -30,7 +34,7 @@ class DefaultVisionEncoder:
     def __init__(self, target_size: int = 32, seed: int = 42):
         self.target_size = target_size
         input_dim = target_size * target_size
-        self.projector = _RandomProjector(input_dim, 256, seed)
+        self.projector = _RandomProjector(input_dim, FUSED_DIM, seed)
 
     @staticmethod
     def _downsample_grayscale(frame: np.ndarray, target_size: int) -> np.ndarray:
