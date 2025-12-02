@@ -212,8 +212,67 @@ def fmt_ts(ts: float | None) -> str:
     except Exception:
         return str(ts)
 
+def file_health(path: str, freshness_sec: float = 5.0) -> Dict[str, Any]:
+    p = Path(path)
+    if not p.exists() or p.stat().st_size == 0:
+        return {"status": "missing", "age": None}
+    now = time.time()
+    mtime = p.stat().st_mtime
+    age = now - mtime
+    if age <= freshness_sec:
+        status = "fresh"
+    else:
+        status = "stale"
+    return {"status": status, "age": age}
+
 # ------------------ Main render (single pass) ------------------
 df = load_df(log_path, int(max_lines))
+# ------------------ Brain vitals ------------------
+frame_health = file_health(frame_path, freshness_sec=5.0)
+spec_health  = file_health(spec_path,  freshness_sec=5.0)
+log_health   = file_health(log_path,   freshness_sec=5.0)
+replay_summary = summarize_replay_dir(replay_dir)
+
+v1, v2, v3, v4 = st.columns(4)
+
+# Camera
+frame_label = "OK" if frame_health["status"] == "fresh" else frame_health["status"]
+frame_age = (
+    f"{frame_health['age']:.1f}s ago"
+    if frame_health["age"] is not None
+    else "—"
+)
+v1.metric("Camera frame", frame_label, frame_age)
+
+# Audio
+spec_label = "OK" if spec_health["status"] == "fresh" else spec_health["status"]
+spec_age = (
+    f"{spec_health['age']:.1f}s ago"
+    if spec_health["age"] is not None
+    else "—"
+)
+v2.metric("Audio spectrogram", spec_label, spec_age)
+
+# Log
+log_label = "OK" if log_health["status"] == "fresh" else log_health["status"]
+log_age = (
+    f"{log_health['age']:.1f}s ago"
+    if log_health["age"] is not None
+    else "—"
+)
+v3.metric("Telemetry log", log_label, log_age)
+
+# Replay
+if replay_summary["exists"]:
+    last_ts = replay_summary["last_ts"]
+    age_str = (
+        f"{time.time() - last_ts:.1f}s ago"
+        if last_ts is not None
+        else "—"
+    )
+    v4.metric("Episodes recorded", replay_summary["episodes"], age_str)
+else:
+    v4.metric("Episodes recorded", 0, "no replay dir")
 
 st.subheader("Replay ingestion")
 replay_summary = summarize_replay_dir(replay_dir)
