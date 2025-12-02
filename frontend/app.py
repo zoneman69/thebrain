@@ -150,22 +150,71 @@ def read_tail(path: str, n: int) -> List[str]:
     return [l.decode("utf-8", errors="ignore") for l in lines]
 
 def show_image_safe(path: str, caption: str):
+    """
+    Show an image without flickering:
+    - Keeps the last good frame visible if the new one is mid-write or invalid.
+    - Uses session_state to remember previous bytes & mtime.
+    """
+    from io import BytesIO
+    from PIL import Image, UnidentifiedImageError
+
     p = Path(path)
+    # key is based on path so multiple calls with different paths don't collide
+    state_key = f"_img_state_{str(p)}"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = {"bytes": None, "mtime": 0.0}
+
+    state = st.session_state[state_key]
+    container = st.empty()
+
+    # If no file and no previous image, show a single 'waiting' message.
     if not p.exists() or p.stat().st_size == 0:
-        st.info(f"Waiting for {caption}…")
+        if state["bytes"] is None:
+            container.info(f"Waiting for {caption}…")
+        else:
+            # Show last known frame, but mark as stale.
+            container.image(
+                state["bytes"],
+                caption=f"{caption} (stale)",
+                use_column_width=True,
+            )
         return
-    # small retry loop to handle very recent writes
-    for _ in range(3):
-        try:
-            with open(p, "rb") as f:
-                data = f.read()
-            st.image(data, caption=caption, use_column_width=True)
-            return
-        except UnidentifiedImageError:
-            time.sleep(0.1)
-        except Exception:
-            time.sleep(0.1)
-    st.warning(f"Could not render {caption} yet.")
+
+    mtime = p.stat().st_mtime
+
+    # If file hasn't changed since last render, reuse bytes (no disk read).
+    if mtime <= state["mtime"] and state["bytes"] is not None:
+        container.image(state["bytes"], caption=caption, use_column_width=True)
+        return
+
+    # Try to load new bytes; on failure, keep showing the old image.
+    try:
+        with open(p, "rb") as f:
+            data = f.read()
+
+        # Basic sanity check: don't accept obviously tiny/broken files
+        if len(data) < 100:
+            raise ValueError("Image too small; likely mid-write")
+
+        # Validate that Pillow can actually open it
+        Image.open(BytesIO(data))
+
+        # Success: update cache and display
+        state["bytes"] = data
+        state["mtime"] = mtime
+        container.image(data, caption=caption, use_column_width=True)
+
+    except (UnidentifiedImageError, ValueError, OSError):
+        # Keep showing last good frame (if any), no warnings to avoid flicker.
+        if state["bytes"] is not None:
+            container.image(
+                state["bytes"],
+                caption=f"{caption} (stale)",
+                use_column_width=True,
+            )
+        else:
+            container.info(f"Waiting for {caption}…")
+
 
 @st.cache_data(ttl=3.0)
 def load_df_cached(path: str, n: int) -> pd.DataFrame:
