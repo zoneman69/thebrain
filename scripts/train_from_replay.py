@@ -49,13 +49,46 @@ def _iter_samples(path: Path) -> Iterator[Tuple[torch.Tensor, Dict[str, torch.Te
         return
 
     targets = targets if targets is not None else np.array([])
+
     for idx in range(fused.shape[0]):
         fused_vec = torch.tensor(fused[idx], dtype=torch.float32)
         target_map: Dict[str, torch.Tensor] = {}
+
         if idx < targets.shape[0]:
             raw_target = targets[idx]
-            if isinstance(raw_target, dict):
-                target_map = {k: torch.tensor(v, dtype=torch.float32) for k, v in raw_target.items()}
+            if isinstance(raw_target, dict) and raw_target:
+                target_map = {
+                    k: torch.tensor(v, dtype=torch.float32)
+                    for k, v in raw_target.items()
+                }
+
+        # If there are no targets, let the caller decide whether to skip
+        if not target_map:
+            yield fused_vec, target_map
+            continue
+
+        # --- Align fused dim with target dim ---
+        # Use the first modality's dim as canonical (e.g. 192)
+        first_tgt = next(iter(target_map.values()))
+        tgt_dim = first_tgt.shape[0]
+
+        if fused_vec.shape[0] != tgt_dim:
+            LOGGER.debug(
+                "Adjusting fused dim from %d -> %d for %s",
+                fused_vec.shape[0],
+                tgt_dim,
+                path.name,
+            )
+            if fused_vec.shape[0] > tgt_dim:
+                # Truncate extra dims
+                fused_vec = fused_vec[:tgt_dim]
+            else:
+                # Pad with zeros if fused is shorter
+                pad = tgt_dim - fused_vec.shape[0]
+                fused_vec = torch.nn.functional.pad(fused_vec, (0, pad))
+
+        yield fused_vec, target_map
+
         yield fused_vec, target_map
 
 
