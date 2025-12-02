@@ -378,8 +378,8 @@ else:
 # -------- Auto / manual refresh logic (no while True) --------
 if auto_refresh:
     time.sleep(refresh)
-    st.experimental_rerun()
+    st.rerun()
 else:
     if manual_refresh:
-        st.experimental_rerun()
+        st.rerun()
     # else: do nothing, page stays static
