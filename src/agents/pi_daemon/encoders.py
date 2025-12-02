@@ -1,23 +1,26 @@
 from __future__ import annotations
+
 import os
 import math
 from typing import Protocol
 
 import numpy as np
 
+# Fused embedding dimensionality; must match hippocampus config
 FUSED_DIM = int(os.getenv("HIPPO_FUSED_DIM", "192"))
+
 
 class VisionEncoder(Protocol):
     def encode_frame(self, frame: np.ndarray) -> np.ndarray:
-        """Return a 1D float32 array of length 256 (vision embedding)."""
+        """Return a 1D float32 array of length FUSED_DIM (vision embedding)."""
 
 
-class DefaultAudioEncoder:
-    def __init__(self, n_mel_bins: int = 64, n_frames: int = 32, seed: int = 1234):
-        self.n_mel_bins = n_mel_bins
-        self.n_frames = n_frames
-        input_dim = n_mel_bins * n_frames
-        self.projector = _RandomProjector(input_dim, FUSED_DIM, seed)
+class AudioEncoder(Protocol):
+    def encode_waveform(self, waveform: np.ndarray, sample_rate: int) -> np.ndarray:
+        """Return a 1D float32 array of length FUSED_DIM (auditory embedding)."""
+
+    def encode_mel(self, mel: np.ndarray) -> np.ndarray:
+        """Encode a mel-like matrix into a 1D float32 array of length FUSED_DIM."""
 
 
 class _RandomProjector:
@@ -61,7 +64,7 @@ class DefaultAudioEncoder:
         self.n_mel_bins = n_mel_bins
         self.n_frames = n_frames
         input_dim = n_mel_bins * n_frames
-        self.projector = _RandomProjector(input_dim, 256, seed)
+        self.projector = _RandomProjector(input_dim, FUSED_DIM, seed)
 
     def _spectrogram(self, waveform: np.ndarray, sample_rate: int) -> np.ndarray:
         waveform = waveform.astype(np.float32)
@@ -101,7 +104,7 @@ class DefaultAudioEncoder:
 
     def encode_mel(self, mel: np.ndarray) -> np.ndarray:
         """
-        Encode a mel-like matrix of shape (n_mel_bins, n_frames) into a 256-d vector.
+        Encode a mel-like matrix of shape (n_mel_bins, n_frames) into a FUSED_DIM-d vector.
         Used for both waveform-derived spectrograms and spectrogram images.
         """
         mel = mel.astype(np.float32)
