@@ -350,13 +350,16 @@ if replay_summary["exists"]:
 else:
     v4.metric("Episodes recorded", 0, "no replay dir")
 
-# ------------------ Tabs ------------------
-tab_overview, tab_metrics, tab_bookmarks, tab_raw = st.tabs(
-    ["Overview", "Metrics", "Bookmarks", "Raw log"]
+# ------------------ View selector (replaces Tabs) ------------------
+nav = st.radio(
+    "View",
+    ["Overview", "Metrics", "Bookmarks", "Raw log"],
+    horizontal=True,
+    key="main_view",
 )
 
-# ======= Overview tab =======
-with tab_overview:
+# ======= Overview view =======
+if nav == "Overview":
     top = st.columns([2, 1])
 
     # Live camera & audio spectrogram
@@ -402,8 +405,8 @@ No telemetry yet. To get started:
         if cols_to_show:
             st.dataframe(df[cols_to_show].tail(50), use_container_width=True)
 
-# ======= Metrics tab =======
-with tab_metrics:
+# ======= Metrics view =======
+elif nav == "Metrics":
     if df.empty:
         st.info("No telemetry loaded; metrics unavailable.")
     else:
@@ -508,8 +511,8 @@ with tab_metrics:
                 rec = downsample(rec)
                 st.line_chart(rec)
 
-# ======= Bookmarks tab =======
-with tab_bookmarks:
+# ======= Bookmarks view =======
+elif nav == "Bookmarks":
     st.subheader("Bookmarks")
     items = sorted(Path(book_dir).glob("book_*.json"))
     if not items:
@@ -551,16 +554,18 @@ with tab_bookmarks:
         if shown == 0:
             st.write("No bookmarks match filter." if q else "No bookmarks yet.")
 
-# ======= Raw log tab =======
-with tab_raw:
+# ======= Raw log view =======
+elif nav == "Raw log":
     st.subheader("Raw tail (last 200 rows)")
     if df.empty:
         st.write("No telemetry rows yet.")
     else:
         st.dataframe(df.tail(200), use_container_width=True)
 
+        
 # -------- Auto / manual refresh logic --------
-if auto_refresh:
+# Only auto-refresh on the Overview view to avoid jumps while inspecting others.
+if nav == "Overview" and auto_refresh:
     time.sleep(refresh)
     st.rerun()
 else:
