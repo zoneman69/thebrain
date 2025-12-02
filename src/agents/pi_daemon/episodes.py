@@ -43,14 +43,26 @@ class _ReplayProjector:
 
 def episode_to_replay(episode: Episode) -> ReplayRecord:
     embeddings: List[np.ndarray] = []
+    targets: Dict[str, np.ndarray] = {}
+
     for key in sorted(episode.inputs.keys()):
-        embeddings.append(episode.inputs[key].astype(np.float32))
+        vector = episode.inputs[key]
+        if vector is None:
+            logger.warning("Episode input %s is None; skipping for replay", key)
+            continue
+
+        vector = vector.astype(np.float32)
+        embeddings.append(vector)
+        targets[key] = vector
+
     if not embeddings:
         raise ValueError("Episode has no inputs to fuse")
+
     fused_raw = np.concatenate(embeddings).astype(np.float32)
     projector = _ReplayProjector()
     fused = projector(fused_raw)
-    return ReplayRecord(fused=fused, targets={}, metadata=dict(episode.metadata))
+
+    return ReplayRecord(fused=fused, targets=targets, metadata=dict(episode.metadata))
 
 
 class ReplayWriter:
