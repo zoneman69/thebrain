@@ -27,7 +27,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from hippocampus import Hippocampus, Event
+from hippocampus import Event, Hippocampus, HippocampusLoader
 from hippocampus.telemetry import log_event
 
 # ---------- Paths / env ----------
@@ -36,6 +36,8 @@ FRAME_PATH = os.environ.get("HIPPO_FRAME","/tmp/hippo_latest.jpg")
 SPEC_PATH  = os.environ.get("HIPPO_SPEC","/tmp/hippo_spec.png")
 CTRL_PATH  = os.environ.get("HIPPO_CTRL", "/tmp/hippo_cmd.json")
 BOOK_DIR   = os.environ.get("HIPPO_BOOK", "/tmp/hippo_bookmarks")
+ARTIFACTS_DIR = Path(os.environ.get("HIPPO_ARTIFACTS_DIR", "/home/image/thebrain/artifacts"))
+ARTIFACT_POLL_SECONDS = float(os.environ.get("HIPPO_ARTIFACTS_POLL", "60"))
 Path(BOOK_DIR).mkdir(parents=True, exist_ok=True)
 
 # ---------- Hippocampus ----------
@@ -53,6 +55,8 @@ hip = Hippocampus(
     temporal_sigma=0.6,
 )
 torch.set_grad_enabled(False)
+artifact_loader = HippocampusLoader(hip, ARTIFACTS_DIR)
+artifact_loader.load_latest()
 
 # ---------- Vision (MobileNetV3 Small) ----------
 try:
@@ -188,8 +192,14 @@ proj_thumb = rng.standard_normal((576, 128)).astype(np.float32) / np.sqrt(576)
 
 try:
     last_print = 0.0
+    last_artifact_poll = 0.0
     while True:
         t = now_sec()
+
+        if t - last_artifact_poll >= ARTIFACT_POLL_SECONDS:
+            if artifact_loader.load_latest():
+                print(json.dumps({"action": "reload_artifacts", "artifact_dir": str(ARTIFACTS_DIR)}))
+            last_artifact_poll = t
 
         # ===== Vision =====
         ok, frame = cam.read()

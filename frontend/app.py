@@ -13,6 +13,7 @@ FRAME_PATH = os.environ.get("HIPPO_FRAME","/tmp/hippo_latest.jpg")
 CTRL_PATH  = os.environ.get("HIPPO_CTRL", "/tmp/hippo_cmd.json")
 BOOK_DIR   = os.environ.get("HIPPO_BOOK", "/tmp/hippo_bookmarks")
 SPEC_PATH  = os.environ.get("HIPPO_SPEC", "/tmp/hippo_spec.png")
+REPLAY_DIR_DEFAULT = os.environ.get("PI_REPLAY_DIR", "/home/image/thebrain/replay")
 
 Path(BOOK_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -27,6 +28,7 @@ with col1:
     spec_path  = st.text_input("Spectrogram path", SPEC_PATH)
     ctrl_path  = st.text_input("Control file", CTRL_PATH)
     book_dir   = st.text_input("Bookmarks dir", BOOK_DIR)
+    replay_dir = st.text_input("Replay dir", REPLAY_DIR_DEFAULT)
     auto_refresh = st.toggle("Auto-refresh", value=True, help="Pause to inspect a single frame/telemetry snapshot.")
     manual_refresh = st.button("🔄 Refresh now", help="Render once when auto-refresh is paused.")
     refresh    = st.slider("Auto-refresh (sec)", 1, 10, 2)
@@ -166,6 +168,50 @@ def latest(df: pd.DataFrame, col: str):
     series = pd.Series(df[col]).dropna()
     return series.iloc[-1] if not series.empty else np.nan
 
+
+@st.cache_data(ttl=5.0)
+def summarize_replay_dir(path: str) -> Dict[str, Any]:
+    replay_path = Path(path)
+    if not replay_path.exists():
+        return {"exists": False, "files": 0, "episodes": 0, "last_ts": None}
+
+    files = sorted(replay_path.glob("*.npz"))
+    total = 0
+    last_ts: float | None = None
+    for f in files:
+        try:
+            payload = np.load(f, allow_pickle=True)
+            fused = payload.get("fused")
+            if fused is not None:
+                total += int(fused.shape[0])
+            metadata = payload.get("metadata")
+            ts_candidate = None
+            if metadata is not None and metadata.size > 0:
+                meta = metadata[-1]
+                if isinstance(meta, dict):
+                    for key in ("t", "ts", "timestamp"):
+                        if key in meta:
+                            try:
+                                ts_candidate = float(meta[key])
+                                break
+                            except Exception:
+                                pass
+            ts_candidate = ts_candidate or f.stat().st_mtime
+            last_ts = ts_candidate if last_ts is None else max(last_ts, ts_candidate)
+        except Exception:
+            continue
+
+    return {"exists": True, "files": len(files), "episodes": total, "last_ts": last_ts}
+
+
+def fmt_ts(ts: float | None) -> str:
+    if ts is None:
+        return "—"
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+    except Exception:
+        return str(ts)
+
 # ------------------ Main render loop ------------------
 placeholder = st.empty()
 
@@ -175,6 +221,17 @@ while True:
     container = placeholder.container()
 
     with container:
+        st.subheader("Replay ingestion")
+        replay_summary = summarize_replay_dir(replay_dir)
+        if not replay_summary["exists"]:
+            st.info(f"Replay dir not found: {replay_dir}")
+        else:
+            rcols = st.columns([2, 1, 1, 1])
+            rcols[0].markdown(f"`{replay_dir}`")
+            rcols[1].metric("Replay files", replay_summary["files"])
+            rcols[2].metric("Total episodes", replay_summary["episodes"])
+            rcols[3].metric("Last episode", fmt_ts(replay_summary["last_ts"]))
+
         # ======= Live camera & audio spectrogram =======
         top = st.columns([2, 1])
         with top[0]:
