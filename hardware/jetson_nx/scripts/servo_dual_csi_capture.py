@@ -55,10 +55,36 @@ def open_cam(sensor_id: int):
         raise RuntimeError(f"Failed to open CSI cam sensor-id={sensor_id}")
     return cap
 
+def read_frame(cap, tries=10, delay=0.05):
+    for _ in range(tries):
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            return True, frame
+        time.sleep(delay)
+    return False, None
+
+
 if __name__ == "__main__":
     # SG90-safe pulses (you can widen later)
-    poses = [("L", 1000), ("C", 1500), ("R", 2000), ("C", 1500)]
     servo_channels = [0, 1, 2, 3]
+
+    # Calibrate per servo (start values)
+    CENTER_US = {
+        0: 1500,
+        1: 2100,
+        2: 1500,
+        3: 2100,
+    }
+
+    RANGE_US = {
+        0: 400,
+        1: 200,  # safer
+        2: 400,
+        3: 200,  # safer
+    }
+
+    poses = [("L", -1), ("C", 0), ("R", +1), ("C", 0)]
+
 
     cap0 = open_cam(0)
     cap1 = open_cam(1)
@@ -68,29 +94,37 @@ if __name__ == "__main__":
         set_freq(bus, 50)
 
         ts = int(time.time())
-        for label, us in poses:
-            print(f"Pose {label}: {us}us")
+        for i, (label, direction) in enumerate(poses):
+            print(f"Pose {label}")
+
+            # Move all servos for this pose
             for ch in servo_channels:
+                us = CENTER_US[ch] + direction * RANGE_US[ch]
                 set_servo_us(bus, ch, us)
 
+            # Let motion settle once (not per-servo)
             time.sleep(0.6)
 
-            ok0, f0 = cap0.read()
-            ok1, f1 = cap1.read()
+            # Capture one frame from each camera
+            ok0, f0 = read_frame(cap0)
+            ok1, f1 = read_frame(cap1)
 
             if ok0:
-                fn0 = f"pose_{label}_cam0_{ts}.jpg"
+                f0 = cv2.rotate(f0, cv2.ROTATE_180)
+                fn0 = f"pose_{i:02d}_{label}_cam0_{ts}.jpg"
                 cv2.imwrite(fn0, f0)
                 print("Saved", fn0)
             else:
                 print("Cam0 frame failed")
 
             if ok1:
-                fn1 = f"pose_{label}_cam1_{ts}.jpg"
+                f1 = cv2.rotate(f1, cv2.ROTATE_180)
+                fn1 = f"pose_{i:02d}_{label}_cam1_{ts}.jpg"
                 cv2.imwrite(fn1, f1)
                 print("Saved", fn1)
             else:
                 print("Cam1 frame failed")
+
 
     cap0.release()
     cap1.release()
